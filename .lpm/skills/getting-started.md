@@ -1,7 +1,7 @@
 ---
 name: getting-started
 description: How to import and use neo.ansi — strip, parse, hasAnsi, selective stripping with preserve, and batch processing with stripLines
-version: "1.0.0"
+version: "1.1.0"
 globs:
   - "**/*.ts"
   - "**/*.js"

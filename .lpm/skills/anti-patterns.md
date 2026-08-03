@@ -1,7 +1,7 @@
 ---
 name: anti-patterns
 description: Common mistakes when using neo.ansi — redundant hasAnsi guards, parse vs strip misuse, preserve pitfalls, chunk boundary leaks, and hasAnsiAll edge cases
-version: "1.0.0"
+version: "1.1.0"
 globs:
   - "**/*.ts"
   - "**/*.js"

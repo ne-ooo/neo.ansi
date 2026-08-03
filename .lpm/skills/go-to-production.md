@@ -1,7 +1,7 @@
 ---
 name: go-to-production
 description: Production patterns for neo.ansi — streaming with chunk buffering, line-by-line vs full buffer, ReDoS immunity, allocation costs, and high-throughput processing
-version: "1.0.0"
+version: "1.1.0"
 globs:
   - "**/*.ts"
   - "**/*.js"
