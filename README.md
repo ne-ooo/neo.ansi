@@ -2,27 +2,26 @@
 
 **Modern, zero-dependency ANSI escape code parser and stripper**
 
-Beats strip-ansi by 10%+ with a state machine parser that's **ReDoS-safe** and **blazingly fast**.
+Uses linear-time scanning to strip and inspect terminal escape sequences.
 
 ## Why neo.ansi?
 
-The ANSI parsing ecosystem has critical problems:
+The ANSI parsing ecosystem has several recurring problems:
 
-1. **Security**: `ansi-regex` (used by strip-ansi) had **CVE-2021-3807** (ReDoS vulnerability)
+1. **Security history**: Old `ansi-regex` releases were affected by **CVE-2021-3807**; current releases contain the fix
 2. **Supply Chain**: September 2025 attack compromised 27+ packages including strip-ansi, chalk, debug (2.6B weekly downloads affected)
 3. **Dependencies**: strip-ansi depends on ansi-regex, creating dependency chains
-4. **Performance**: Regex-based parsers are slower and vulnerable to pathological input
+4. **Inspection**: Regex-based strippers generally do not return parsed sequence metadata
 
 **neo.ansi solves all of these:**
 
-- ✅ **Zero runtime dependencies** - No supply chain risk
-- ✅ **ReDoS-safe** - State machine parser, not regex
-- ✅ **10%+ faster** than strip-ansi on most workloads
-- ✅ **16.6M ops/sec** on plain text (fast path optimization)
+- ✅ **Zero runtime dependencies** - Reduced runtime supply-chain surface
+- ✅ **ReDoS-safe recognition** - Forward scanners and disjoint byte classes
+- ✅ **Fast path** - Plain strings return without full parsing
 - ✅ **TypeScript-first** - Full type safety
-- ✅ **Comprehensive** - Handles all ANSI sequence types (CSI, OSC, DCS, simple escapes)
-- ✅ **Small bundle** - ~7 KB ESM, tree-shakeable
-- ✅ **100% test coverage** - 111 tests including security tests
+- ✅ **Broad coverage** - CSI, OSC, DCS, SOS, PM, APC, simple ESC sequences, and 8-bit C1 forms
+- ✅ **Small bundle** - ~16.2 KB ESM, tree-shakeable
+- ✅ **Adversarial tests** - Includes malformed, incomplete, C1, and pathological inputs
 
 ## Installation
 
@@ -58,7 +57,7 @@ const result = parse("\x1b[31mRed\x1b[0m");
 
 ### `strip(input: string, options?: StripOptions): string`
 
-Strip all ANSI escape codes from a string.
+Strip supported ANSI escape sequences from a string.
 
 ```typescript
 strip("\x1b[31mRed text\x1b[0m");
@@ -67,12 +66,10 @@ strip("\x1b[31mRed text\x1b[0m");
 strip("\x1b[1;32mBold green\x1b[0m text");
 // => 'Bold green text'
 
-// Handles all sequence types
+// Handles CSI and terminal string-control sequences
 strip("Normal \x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ text");
 // => 'Normal link text'
 ```
-
-**Performance**: 1.3M ops/sec on simple text, 16.6M ops/sec on plain text (fast path)
 
 ### `stripLines(lines: string[], options?: StripOptions): string[]`
 
@@ -85,14 +82,12 @@ stripLines(["\x1b[31mLine 1\x1b[0m", "\x1b[32mLine 2\x1b[0m", "Line 3"]);
 
 ### `hasAnsi(input: string): boolean`
 
-Fast check if string contains ANSI codes (doesn't parse, just checks for ESC).
+Fast check for ESC and the supported 8-bit C1 introducers/terminators. It does not fully parse the sequence.
 
 ```typescript
 hasAnsi("\x1b[31mRed\x1b[0m"); // => true
 hasAnsi("Plain text"); // => false
 ```
-
-**Performance**: 200M+ checks/sec for strings without ANSI
 
 ### `hasAnsiAny(inputs: string[]): boolean`
 
@@ -150,6 +145,20 @@ result.sequences;
 - Building terminal emulators
 - Log analysis tools
 
+CSI metadata is lossless:
+
+```typescript
+const [sequence] = parse("\x1b[?38:2::255:0:0;1 qText").sequences;
+
+sequence.parameterBytes; // '?38:2::255:0:0;1'
+sequence.privateMarker; // '?'
+sequence.params; // ['38:2::255:0:0', '1'] — colon subparameters stay intact
+sequence.intermediateBytes; // ' '
+sequence.final; // 'q'
+```
+
+Empty semicolon-delimited parameters are preserved, so parsing `\x1b[;m` returns `params: ['', '']`.
+
 ### `StripOptions`
 
 Options for selective stripping — preserve specific ANSI sequence types while stripping others.
@@ -189,11 +198,14 @@ strip(input, { preserve: [] });
 | `AnsiType.CSI` | Colors, cursor movement, SGR (`ESC [`) |
 | `AnsiType.OSC` | Hyperlinks, window titles (`ESC ]`) |
 | `AnsiType.DCS` | Device control strings (`ESC P`) |
+| `AnsiType.SOS` | Start-of-string controls (`ESC X`) |
+| `AnsiType.PM` | Privacy messages (`ESC ^`) |
+| `AnsiType.APC` | Application program commands (`ESC _`) |
 | `AnsiType.Simple` | Two-character escapes (`ESC letter`) |
 
 ## Supported ANSI Sequences
 
-neo.ansi handles all VT100/ECMA-48 ANSI escape sequence types:
+neo.ansi recognizes the common 7-bit ESC forms and their 8-bit C1 equivalents.
 
 ### CSI (Control Sequence Introducer) - `ESC [`
 
@@ -226,10 +238,11 @@ strip("\x1b]0;My Title\x07Text");
 Device-specific sequences.
 
 ```typescript
-strip("\x1bP1$rTest\x07After"); // BEL terminator
 strip("\x1bP1$rTest\x1b\\After"); // ST terminator
 // => 'After'
 ```
+
+DCS, SOS, PM, and APC require ST (`ESC \\` or C1 ST). BEL is accepted only for OSC compatibility.
 
 ### Simple Escapes - `ESC letter`
 
@@ -239,51 +252,32 @@ Two-character escape sequences.
 strip("\x1b7Save cursor"); // Save cursor
 strip("\x1b8Restore cursor"); // Restore cursor
 strip("\x1bMReverse index"); // Reverse index
+strip("\x1b(BASCII charset"); // ESC intermediate + final
 ```
 
 ## Performance
 
-Benchmark results on Apple Silicon M1:
+`strip()` scans directly without creating the sequence objects returned by `parse()`. It has dedicated fast paths for plain text, common ESC-only output, and dense CSI output while retaining the complete scanner as a fallback.
 
-| Operation                  | ops/sec   | Notes                               |
-| -------------------------- | --------- | ----------------------------------- |
-| **Simple ANSI**            | 1.3M      | 26-42% faster than strip-ansi       |
-| **Plain text (fast path)** | **16.6M** | No ESC = instant return             |
-| **Complex sequences**      | 660K      | OSC hyperlinks, cursor movement     |
-| **Mixed content**          | 195K      | Real-world test output              |
-| **100 log lines**          | 11K       | Typical log file parsing            |
-| **Pathological input**     | 2.7-22K   | **ReDoS-safe** (regex parsers fail) |
-
-### Comparison vs strip-ansi
-
-| Feature            | neo.ansi                    | strip-ansi      |
-| ------------------ | --------------------------- | --------------- |
-| **Performance**    | 1.3M ops/sec                | ~1.1M ops/sec   |
-| **Fast path**      | 16.6M ops/sec               | None            |
-| **ReDoS safe**     | ✅ Yes (state machine)      | ❌ No (regex)   |
-| **Dependencies**   | 0                           | 1 (ansi-regex)  |
-| **Bundle size**    | 6.91 KB ESM                 | ~4 KB           |
-| **TypeScript**     | ✅ First-class              | Community types |
-| **Parse metadata** | ✅ Yes                      | ❌ No           |
-| **Sequence types** | All (CSI, OSC, DCS, simple) | All             |
+In the reference Apple M5 Pro / Node.js 26.5.0 run, neo.ansi was faster than pinned `strip-ansi@7.2.0` on eight of nine equivalent workloads and about 6% slower on mixed CLI output. The largest measured lead was 4.46x on 10KB text with sparse ANSI. These numbers are environment-specific; see [BENCHMARKS.md](BENCHMARKS.md) for the complete results and reproduction details.
 
 ## Security
 
 ### ReDoS Protection
 
-neo.ansi uses a **state machine parser** instead of regex, making it **immune to ReDoS** (Regular Expression Denial of Service).
+neo.ansi uses forward scanners for the complete grammar. Its dense-CSI fast path uses ordered, disjoint byte classes and falls back to the scanner for complex or malformed input, preserving linear scaling.
 
-**CVE-2021-3807** (ansi-regex vulnerability):
+**CVE-2021-3807** affected historical `ansi-regex` releases before the upstream fix:
 
-- Affected: strip-ansi, chalk, inquirer, ora, and 100+ other packages
-- Cause: Regex catastrophic backtracking on malicious input
-- neo.ansi: **Not affected** - state machine is O(n), handles pathological input safely
+- Cause: catastrophic backtracking on malicious input
+- Current `ansi-regex` and `strip-ansi` releases are not affected by that historical CVE
+- neo.ansi's sequence recognition remains O(n) for this input class
 
 ```typescript
-// This would cause ReDoS in ansi-regex
+// This affected vulnerable historical ansi-regex releases
 const malicious = "\x1b[" + "1;".repeat(50000) + "m";
 
-// neo.ansi handles it in ~44ms (linear time)
+// neo.ansi handles it in linear time
 strip(malicious); // => ''
 ```
 
@@ -295,12 +289,18 @@ strip(malicious); // => ''
 - 2.6 billion weekly downloads affected
 - Attack vector: Compromised maintainer accounts
 
-**neo.ansi protection**:
+**neo.ansi controls**:
 
 - ✅ **Zero runtime dependencies** - No dependency chain to compromise
-- ✅ **@lpm.dev namespace** - Consistent security practices
-- ✅ **Comprehensive tests** - 111 tests including 16 security tests
-- ✅ **TypeScript strict mode** - Type safety prevents many vulnerabilities
+- ✅ **Committed lockfile** - Reproducible development and release dependency graph
+- ✅ **Dependency audit gate** - High/critical development advisories fail CI
+- ✅ **Strict TypeScript and adversarial tests**
+
+Zero dependencies reduce supply-chain exposure; they do not eliminate the risk of compromised maintainers or build tooling.
+
+### Terminal-sanitization boundary
+
+`strip()` removes recognized ANSI escape sequences. It is not a complete untrusted-terminal sanitizer: carriage returns, backspace, BEL outside OSC, bidirectional Unicode controls, and other non-ANSI controls may remain. Preserving CSI, OSC, DCS, SOS, PM, or APC sequences should only be done for trusted input.
 
 ## Migration Guide
 
@@ -318,9 +318,9 @@ const clean = strip("\x1b[31mRed\x1b[0m");
 
 **Benefits**:
 
-- 10%+ faster
 - Zero dependencies
-- ReDoS-safe
+- Linear-time sequence recognition
+- Parsed sequence metadata
 - Type-safe
 
 ### From ansi-regex
@@ -339,8 +339,7 @@ const clean = strip(string);
 
 **Benefits**:
 
-- No ReDoS vulnerability
-- Faster detection (200M+ ops/sec)
+- Linear-time sequence recognition
 - Simpler API
 
 ## Real-World Use Cases
@@ -365,13 +364,13 @@ strip(output);
 const viteOutput = `
 \x1b[36mvite\x1b[0m \x1b[32mv5.0.0\x1b[0m building for production...
 \x1b[32m✓\x1b[0m 42 modules transformed.
-dist/index.js  \x1b[1;32m6.91 KB\x1b[0m
+dist/index.js  \x1b[1;32m~16.2 KB\x1b[0m
 `;
 
 strip(viteOutput);
 // => vite v5.0.0 building for production...
 // => ✓ 42 modules transformed.
-// => dist/index.js  6.91 KB
+// => dist/index.js  ~16.2 KB
 ```
 
 ### Log Analysis
@@ -409,20 +408,23 @@ result.text; // string
 result.sequences; // AnsiSequence[]
 
 const seq: AnsiSequence = result.sequences[0];
-seq.type; // AnsiType ('csi' | 'osc' | 'dcs' | 'simple' | 'unknown')
+seq.type; // AnsiType ('csi' | 'osc' | 'dcs' | 'sos' | 'pm' | 'apc' | 'simple' | 'unknown')
 seq.raw; // string
 seq.start; // number
 seq.end; // number
 seq.params; // string[] | undefined
+seq.parameterBytes; // string | undefined
+seq.privateMarker; // string | undefined
+seq.intermediateBytes; // string | undefined
 seq.final; // string | undefined
 ```
 
 ## Bundle Size
 
-- **ESM**: 6.91 KB
-- **CJS**: 7.20 KB
-- **Types**: 9.16 KB
-- **Gzipped**: ~2.3 KB
+- **ESM**: ~16.2 KB
+- **CJS**: ~16.6 KB
+- **Types**: ~10.9 KB
+- **Gzipped ESM**: ~4.0 KB
 
 Tree-shakeable: Import only what you need.
 

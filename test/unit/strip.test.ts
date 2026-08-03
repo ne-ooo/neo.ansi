@@ -4,6 +4,10 @@
 
 import { describe, it, expect } from 'vitest'
 import { strip, stripLines } from '../../src/core/strip.js'
+import {
+  ANSI_BYTE_RANGE,
+  CSI_FINAL_BYTE,
+} from '../../src/core/constants.js'
 import { AnsiType } from '../../src/types.js'
 
 describe('strip', () => {
@@ -30,6 +34,19 @@ describe('strip', () => {
       expect(strip('\x1b[1m\x1b[31m\x1b[4mText\x1b[0m')).toBe('Text')
     })
 
+    it('should fall back safely when common CSI sequences precede other input', () => {
+      const padding = 'x'.repeat(64)
+      expect(strip(`${padding}\x1b[31mRed\x1b[0m\x1b]0;Title\x07Text`)).toBe(
+        `${padding}RedText`
+      )
+      expect(strip(`${padding}\x1b[31mRed\x1b[0m\x1b[123`)).toBe(
+        `${padding}Red`
+      )
+      expect(strip(`${padding}\x1b[31mRed\x1b[0m\x1b\x01Text`)).toBe(
+        `${padding}Red\x01Text`
+      )
+    })
+
     it('should handle CSI with parameters', () => {
       expect(strip('\x1b[38;5;196mRed\x1b[0m')).toBe('Red')
       expect(strip('\x1b[1;2;3;4;5mMany params\x1b[0m')).toBe('Many params')
@@ -38,6 +55,38 @@ describe('strip', () => {
     it('should handle CSI with private markers', () => {
       expect(strip('\x1b[?25hShow cursor')).toBe('Show cursor')
       expect(strip('\x1b[?1049hAlt buffer')).toBe('Alt buffer')
+    })
+
+    it('should strip CSI intermediates and all private parameter bytes', () => {
+      expect(strip('\x1b[1 qCursor')).toBe('Cursor')
+      expect(strip('\x1b[<5hMouse')).toBe('Mouse')
+      expect(strip('\x1b[=1hMode')).toBe('Mode')
+    })
+
+    it('should strip 8-bit C1 CSI sequences', () => {
+      expect(strip('\u009b31mRed\u009b0m')).toBe('Red')
+    })
+
+    it('should accept every CSI byte-class boundary', () => {
+      for (
+        let code = ANSI_BYTE_RANGE.CSI_PARAMETER_MIN;
+        code <= ANSI_BYTE_RANGE.CSI_PARAMETER_MAX;
+        code++
+      ) {
+        expect(strip(`\x1b[${String.fromCharCode(code)}mText`)).toBe('Text')
+      }
+
+      for (
+        let code = ANSI_BYTE_RANGE.CSI_INTERMEDIATE_MIN;
+        code <= ANSI_BYTE_RANGE.CSI_INTERMEDIATE_MAX;
+        code++
+      ) {
+        expect(strip(`\x1b[${String.fromCharCode(code)}qText`)).toBe('Text')
+      }
+
+      for (let code = CSI_FINAL_BYTE.MIN; code <= CSI_FINAL_BYTE.MAX; code++) {
+        expect(strip(`\x1b[${String.fromCharCode(code)}Text`)).toBe('Text')
+      }
     })
   })
 
@@ -52,6 +101,10 @@ describe('strip', () => {
       expect(strip('A\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\B')).toBe('AlinkB')
     })
 
+    it('should strip C1 OSC terminated by C1 ST', () => {
+      expect(strip('\u009d0;Title\u009cText')).toBe('Text')
+    })
+
     it('should handle hyperlinks', () => {
       const input = 'Visit \x1b]8;;https://example.com\x1b\\example.com\x1b]8;;\x1b\\ for info'
       expect(strip(input)).toBe('Visit example.com for info')
@@ -59,12 +112,29 @@ describe('strip', () => {
   })
 
   describe('DCS sequences (ESC P)', () => {
-    it('should strip DCS terminated by BEL', () => {
-      expect(strip('\x1bP1$rTest\x07After')).toBe('After')
+    it('should not terminate DCS at BEL', () => {
+      expect(strip('\x1bP1$rBefore\x07After\x1b\\Text')).toBe('Text')
     })
 
     it('should strip DCS terminated by ST', () => {
       expect(strip('\x1bP1$rTest\x1b\\After')).toBe('After')
+    })
+
+    it('should strip C1 DCS terminated by C1 ST', () => {
+      expect(strip('\u00901$rTest\u009cAfter')).toBe('After')
+    })
+  })
+
+  describe('SOS, PM, and APC sequences', () => {
+    it.each([
+      '\x1bXpayload\x1b\\Text',
+      '\x1b^payload\x1b\\Text',
+      '\x1b_payload\x1b\\Text',
+      '\u0098payload\u009cText',
+      '\u009epayload\u009cText',
+      '\u009fpayload\u009cText',
+    ])('should strip %j', (input) => {
+      expect(strip(input)).toBe('Text')
     })
   })
 
@@ -73,6 +143,23 @@ describe('strip', () => {
       expect(strip('\x1b7Save cursor')).toBe('Save cursor')
       expect(strip('\x1b8Restore cursor')).toBe('Restore cursor')
       expect(strip('\x1bMReverse index')).toBe('Reverse index')
+    })
+
+    it('should strip ESC sequences with intermediate bytes', () => {
+      expect(strip('\x1b(BText')).toBe('Text')
+      expect(strip('\x1b)0Text')).toBe('Text')
+
+      for (
+        let code = ANSI_BYTE_RANGE.ESC_INTERMEDIATE_MIN;
+        code <= ANSI_BYTE_RANGE.ESC_INTERMEDIATE_MAX;
+        code++
+      ) {
+        expect(strip(`\x1b${String.fromCharCode(code)}BText`)).toBe('Text')
+      }
+    })
+
+    it('should reprocess repeated ESC before a valid sequence', () => {
+      expect(strip('\x1b\x1b[31mRed')).toBe('Red')
     })
   })
 

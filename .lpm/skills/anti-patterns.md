@@ -23,9 +23,9 @@ Correct:
 const clean = strip(input)
 ```
 
-`strip()` already has the identical fast path internally — `if (!input.includes('\x1b')) return input`. `hasAnsi()` is also `input.includes('\x1b')`. The guarded version scans the string for `\x1b` twice: once in `hasAnsi()`, once inside `strip()`. Just call `strip()` directly.
+`strip()` already calls the same ESC/C1 detection used by `hasAnsi()`. The guarded version scans the string twice. Just call `strip()` directly.
 
-Source: `src/core/strip.ts:35-37` and `src/utils/has-ansi.ts:24-27` — identical check
+Source: `src/core/strip.ts` and `src/utils/has-ansi.ts`
 
 ### [HIGH] Using parse() when you only need the clean text
 
@@ -42,9 +42,9 @@ Correct:
 const cleanText = strip(coloredOutput)
 ```
 
-`parse()` allocates an `AnsiSequence` object per sequence (with `type`, `raw`, `start`, `end`, `params`, `final` fields) plus the result wrapper. All of that is immediately discarded. `strip()` calls `parse()` internally and returns just `result.text`. Use `parse()` only when you need the `sequences` array — for debugging, transforming sequences, or building custom strippers.
+`parse()` allocates an `AnsiSequence` object per sequence (including raw bytes, positions, and CSI metadata) plus the result wrapper. `strip()` scans directly and skips those metadata allocations. Use `parse()` only when you need the `sequences` array — for debugging, transforming sequences, or building custom strippers.
 
-Source: `src/core/strip.ts:40` — strip() calls parse() internally
+Source: `src/core/strip.ts` and `src/core/state-machine.ts`
 
 ### [HIGH] Passing raw strings instead of AnsiType enum to preserve
 
@@ -65,24 +65,6 @@ This silently works at runtime because `AnsiType.CSI === 'csi'` (string enum). B
 
 Source: `src/types.ts` — AnsiType is a string enum, maintainer interview
 
-### [MEDIUM] Passing preserve: [] for "strip everything"
-
-Wrong:
-
-```typescript
-strip(input, { preserve: [] })
-```
-
-Correct:
-
-```typescript
-strip(input)
-```
-
-An empty `preserve` array still forces `strip()` through the full reconstruction loop — iterating every sequence and rebuilding the string character by character. Without `preserve`, it returns `result.text` directly from the parser — a single string already assembled. The empty array adds measurable overhead for zero behavioral difference.
-
-Source: `src/core/strip.ts:47-69` — reconstruction loop runs when preserve is provided, maintainer interview
-
 ### [MEDIUM] Using .map(strip) instead of stripLines()
 
 Wrong:
@@ -100,7 +82,7 @@ const cleaned = stripLines(lines)
 
 `stripLines()` does exactly this but signals intent and is discoverable in the API. Functionally identical, but using the dedicated function avoids re-inventing existing API surface.
 
-Source: `src/core/strip.ts:92-94` — stripLines maps strip over array
+Source: `src/core/strip.ts` — stripLines preallocates and fills the result array
 
 ### [CRITICAL] Stripping chunks independently in a stream — character leakage
 

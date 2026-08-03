@@ -86,6 +86,9 @@ strip(input, { preserve: ['csi'] })
 | CSI | `AnsiType.CSI` | `\x1b[31m` | Colors, styles, cursor movement |
 | OSC | `AnsiType.OSC` | `\x1b]8;;url\x1b\\` | Hyperlinks, window titles |
 | DCS | `AnsiType.DCS` | `\x1bP1$r\x1b\\` | Device control strings |
+| SOS | `AnsiType.SOS` | `\x1bXdata\x1b\\` | Start-of-string controls |
+| PM | `AnsiType.PM` | `\x1b^data\x1b\\` | Privacy messages |
+| APC | `AnsiType.APC` | `\x1b_data\x1b\\` | Application program commands |
 | Simple | `AnsiType.Simple` | `\x1b7` | Two-character escapes (save/restore cursor) |
 | Unknown | `AnsiType.Unknown` | `\x1b[` (incomplete) | Malformed or truncated sequences |
 
@@ -108,6 +111,8 @@ result.sequences   // Array of AnsiSequence objects:
 
 If you only need the clean text, use `strip()` instead — same result with clearer intent.
 
+For CSI sequences, `parameterBytes` and `intermediateBytes` preserve the exact grammar bytes. `privateMarker` contains leading `<`, `=`, `>`, or `?` bytes. `params` splits only on semicolons, preserves empty parameters, and leaves colon-delimited subparameters intact.
+
 ## Detection Utilities
 
 ```typescript
@@ -125,4 +130,4 @@ hasAnsiAll(['\x1b[31mRed\x1b[0m', '\x1b[32mGreen\x1b[0m'])  // true
 hasAnsiAll([])  // false (empty array)
 ```
 
-`hasAnsi()` uses a simple `string.includes('\x1b')` check — it does not parse. Use it when you need to branch on ANSI presence without stripping.
+`hasAnsi()` checks for ESC and supported 8-bit C1 introducers/terminators without fully parsing them. Use it when you need to branch on ANSI presence without stripping.

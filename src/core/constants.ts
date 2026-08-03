@@ -29,6 +29,20 @@ export const CHAR_CODE = {
   BEL: 0x07,
   /** ST - String Terminator (ESC \) */
   BACKSLASH: 0x5c, // \
+  /** C1 DCS - 8-bit Device Control String introducer */
+  C1_DCS: 0x90,
+  /** C1 SOS - 8-bit Start of String introducer */
+  C1_SOS: 0x98,
+  /** C1 CSI - 8-bit Control Sequence Introducer */
+  C1_CSI: 0x9b,
+  /** C1 ST - 8-bit String Terminator */
+  C1_ST: 0x9c,
+  /** C1 OSC - 8-bit Operating System Command introducer */
+  C1_OSC: 0x9d,
+  /** C1 PM - 8-bit Privacy Message introducer */
+  C1_PM: 0x9e,
+  /** C1 APC - 8-bit Application Program Command introducer */
+  C1_APC: 0x9f,
   /** : - Colon (parameter separator in some sequences) */
   COLON: 0x3a, // :
   /** ; - Semicolon (parameter separator) */
@@ -43,6 +57,27 @@ export const CHAR_CODE = {
   AT: 0x40, // @
   /** ~ - Tilde (CSI final byte range end) */
   TILDE: 0x7e, // ~
+} as const
+
+/**
+ * ECMA-48 byte ranges used by ESC and CSI sequences.
+ */
+export const ANSI_BYTE_RANGE = {
+  /** ESC intermediate bytes */
+  ESC_INTERMEDIATE_MIN: 0x20,
+  ESC_INTERMEDIATE_MAX: 0x2f,
+  /** ESC final bytes */
+  ESC_FINAL_MIN: 0x30,
+  ESC_FINAL_MAX: 0x7e,
+  /** CSI parameter bytes */
+  CSI_PARAMETER_MIN: 0x30,
+  CSI_PARAMETER_MAX: 0x3f,
+  /** CSI private-marker bytes (<, =, >, ?) */
+  CSI_PRIVATE_MIN: 0x3c,
+  CSI_PRIVATE_MAX: 0x3f,
+  /** CSI intermediate bytes */
+  CSI_INTERMEDIATE_MIN: 0x20,
+  CSI_INTERMEDIATE_MAX: 0x2f,
 } as const
 
 /**
@@ -105,15 +140,60 @@ export function isCsiFinalByte(code: number): boolean {
 /**
  * Helper function to check if character code is a CSI parameter byte
  *
- * Parameter bytes include digits (0-9), semicolon (;), and colon (:)
+ * ECMA-48 parameter bytes occupy the complete 0x30-0x3f range. This includes
+ * digits, separators, and private markers such as <, =, >, and ?.
  *
  * @param code - Character code to check
  * @returns true if code is a valid CSI parameter byte
  */
 export function isCsiParamByte(code: number): boolean {
   return (
-    isDigit(code) ||
-    code === CHAR_CODE.SEMICOLON ||
-    code === CHAR_CODE.COLON
+    code >= ANSI_BYTE_RANGE.CSI_PARAMETER_MIN &&
+    code <= ANSI_BYTE_RANGE.CSI_PARAMETER_MAX
+  )
+}
+
+/** Check whether a character code is a CSI private-marker byte. */
+export function isCsiPrivateByte(code: number): boolean {
+  return (
+    code >= ANSI_BYTE_RANGE.CSI_PRIVATE_MIN &&
+    code <= ANSI_BYTE_RANGE.CSI_PRIVATE_MAX
+  )
+}
+
+/** Check whether a character code is a CSI intermediate byte. */
+export function isCsiIntermediateByte(code: number): boolean {
+  return (
+    code >= ANSI_BYTE_RANGE.CSI_INTERMEDIATE_MIN &&
+    code <= ANSI_BYTE_RANGE.CSI_INTERMEDIATE_MAX
+  )
+}
+
+/** Check whether a character code is an ESC intermediate byte. */
+export function isEscapeIntermediateByte(code: number): boolean {
+  return (
+    code >= ANSI_BYTE_RANGE.ESC_INTERMEDIATE_MIN &&
+    code <= ANSI_BYTE_RANGE.ESC_INTERMEDIATE_MAX
+  )
+}
+
+/** Check whether a character code is an ESC final byte. */
+export function isEscapeFinalByte(code: number): boolean {
+  return (
+    code >= ANSI_BYTE_RANGE.ESC_FINAL_MIN &&
+    code <= ANSI_BYTE_RANGE.ESC_FINAL_MAX
+  )
+}
+
+/** Check whether a character code introduces or terminates a C1 sequence. */
+export function isAnsiC1Code(code: number): boolean {
+  return (
+    code === CHAR_CODE.C1_CSI ||
+    code === CHAR_CODE.C1_OSC ||
+    code === CHAR_CODE.C1_DCS ||
+    code === CHAR_CODE.C1_SOS ||
+    code === CHAR_CODE.C1_PM ||
+    code === CHAR_CODE.C1_APC ||
+    code === CHAR_CODE.C1_ST
   )
 }

@@ -51,6 +51,10 @@ describe('parse', () => {
       expect(result.sequences[0]).toMatchObject({
         type: AnsiType.CSI,
         raw: '\x1b[?25h',
+        parameterBytes: '?25',
+        privateMarker: '?',
+        params: ['25'],
+        intermediateBytes: '',
         final: 'h',
       })
     })
@@ -63,6 +67,58 @@ describe('parse', () => {
         type: AnsiType.CSI,
         params: ['2'],
         final: 'A',
+      })
+    })
+
+    it('should parse the full parameter-byte range and intermediates', () => {
+      const privateResult = parse('\x1b[<5hMouse')
+      const intermediateResult = parse('\x1b[1 qCursor')
+
+      expect(privateResult.text).toBe('Mouse')
+      expect(privateResult.sequences[0]).toMatchObject({
+        type: AnsiType.CSI,
+        parameterBytes: '<5',
+        privateMarker: '<',
+        params: ['5'],
+        intermediateBytes: '',
+        final: 'h',
+      })
+      expect(intermediateResult.text).toBe('Cursor')
+      expect(intermediateResult.sequences[0]).toMatchObject({
+        type: AnsiType.CSI,
+        raw: '\x1b[1 q',
+        parameterBytes: '1',
+        params: ['1'],
+        intermediateBytes: ' ',
+        final: 'q',
+      })
+    })
+
+    it('should preserve empty and colon-delimited CSI parameter metadata', () => {
+      const extendedColor = parse('\x1b[38:2::255:0:0;1mText')
+      const emptyParameters = parse('\x1b[;mText')
+
+      expect(extendedColor.sequences[0]).toMatchObject({
+        parameterBytes: '38:2::255:0:0;1',
+        params: ['38:2::255:0:0', '1'],
+        intermediateBytes: '',
+      })
+      expect(emptyParameters.sequences[0]).toMatchObject({
+        parameterBytes: ';',
+        params: ['', ''],
+      })
+    })
+
+    it('should parse 8-bit C1 CSI sequences', () => {
+      const result = parse('\u009b31mRed\u009b0m')
+
+      expect(result.text).toBe('Red')
+      expect(result.sequences).toHaveLength(2)
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.CSI,
+        raw: '\u009b31m',
+        params: ['31'],
+        final: 'm',
       })
     })
   })
@@ -91,6 +147,16 @@ describe('parse', () => {
       })
     })
 
+    it('should parse C1 OSC and C1 ST', () => {
+      const result = parse('\u009d0;Title\u009cText')
+
+      expect(result.text).toBe('Text')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.OSC,
+        raw: '\u009d0;Title\u009c',
+      })
+    })
+
     it('should parse hyperlink OSC', () => {
       const input = '\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\'
       const result = parse(input)
@@ -103,13 +169,13 @@ describe('parse', () => {
   })
 
   describe('DCS sequences', () => {
-    it('should parse DCS terminated by BEL', () => {
-      const result = parse('\x1bP1$rTest\x07After')
+    it('should not treat BEL as a DCS terminator', () => {
+      const result = parse('\x1bP1$rBefore\x07After\x1b\\Text')
 
-      expect(result.text).toBe('After')
+      expect(result.text).toBe('Text')
       expect(result.sequences[0]).toMatchObject({
         type: AnsiType.DCS,
-        raw: '\x1bP1$rTest\x07',
+        raw: '\x1bP1$rBefore\x07After\x1b\\',
       })
     })
 
@@ -121,6 +187,32 @@ describe('parse', () => {
         type: AnsiType.DCS,
         raw: '\x1bP1$rTest\x1b\\',
       })
+    })
+
+    it('should parse C1 DCS terminated by C1 ST', () => {
+      const result = parse('\u00901$rTest\u009cAfter')
+
+      expect(result.text).toBe('After')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.DCS,
+        raw: '\u00901$rTest\u009c',
+      })
+    })
+  })
+
+  describe('SOS, PM, and APC sequences', () => {
+    it.each([
+      ['SOS', '\x1bXpayload\x1b\\', AnsiType.SOS],
+      ['PM', '\x1b^payload\x1b\\', AnsiType.PM],
+      ['APC', '\x1b_payload\x1b\\', AnsiType.APC],
+      ['C1 SOS', '\u0098payload\u009c', AnsiType.SOS],
+      ['C1 PM', '\u009epayload\u009c', AnsiType.PM],
+      ['C1 APC', '\u009fpayload\u009c', AnsiType.APC],
+    ])('should classify %s independently', (_name, sequence, type) => {
+      const result = parse(`${sequence}Text`)
+
+      expect(result.text).toBe('Text')
+      expect(result.sequences[0]?.type).toBe(type)
     })
   })
 
@@ -134,6 +226,36 @@ describe('parse', () => {
         raw: '\x1b7',
         start: 0,
         end: 2,
+      })
+    })
+
+    it('should parse ESC sequences with intermediate bytes', () => {
+      const result = parse('\x1b(BText')
+
+      expect(result.text).toBe('Text')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.Simple,
+        raw: '\x1b(B',
+      })
+    })
+
+    it('should reprocess a repeated ESC as a new introducer', () => {
+      const result = parse('\x1b\x1b[31mRed')
+
+      expect(result.text).toBe('Red')
+      expect(result.sequences.map((sequence) => sequence.type)).toEqual([
+        AnsiType.Unknown,
+        AnsiType.CSI,
+      ])
+    })
+
+    it('should strip a standalone C1 ST', () => {
+      const result = parse('Before\u009cAfter')
+
+      expect(result.text).toBe('BeforeAfter')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.Simple,
+        raw: '\u009c',
       })
     })
   })
@@ -194,7 +316,39 @@ describe('parse', () => {
       const result = parse('\x1b]0;No terminator')
 
       expect(result.text).toBe('')
-      expect(result.sequences[0]?.type).toBe(AnsiType.OSC)
+      expect(result.sequences[0]?.type).toBe(AnsiType.Unknown)
+    })
+
+    it('should mark every incomplete string control as unknown', () => {
+      for (const input of [
+        '\x1bPpayload',
+        '\x1bXpayload',
+        '\x1b^payload',
+        '\x1b_payload',
+        '\u0090payload',
+        '\u0098payload',
+        '\u009dpayload',
+        '\u009epayload',
+        '\u009fpayload',
+      ]) {
+        const result = parse(input)
+        expect(result.sequences.at(-1)).toMatchObject({
+          type: AnsiType.Unknown,
+          end: input.length,
+        })
+      }
+    })
+
+    it('should mark an incomplete ESC intermediate sequence as unknown', () => {
+      const input = '\x1b('
+      const result = parse(input)
+
+      expect(result.text).toBe('')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.Unknown,
+        raw: input,
+        end: input.length,
+      })
     })
 
     it('should preserve Unicode in text', () => {

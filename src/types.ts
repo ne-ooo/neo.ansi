@@ -14,7 +14,13 @@ export enum AnsiType {
   OSC = 'osc',
   /** DCS (Device Control String) - ESC P ... */
   DCS = 'dcs',
-  /** Simple escape sequences - ESC letter */
+  /** SOS (Start of String) - ESC X ... */
+  SOS = 'sos',
+  /** PM (Privacy Message) - ESC ^ ... */
+  PM = 'pm',
+  /** APC (Application Program Command) - ESC _ ... */
+  APC = 'apc',
+  /** Simple/intermediate ESC sequences and standalone C1 ST */
   Simple = 'simple',
   /** Unknown/malformed sequence */
   Unknown = 'unknown',
@@ -32,8 +38,14 @@ export interface AnsiSequence {
   start: number
   /** End position in original string */
   end: number
-  /** Parsed parameters (for CSI sequences) */
+  /** Semicolon-delimited CSI parameters; colon subparameters remain intact */
   params?: string[]
+  /** Exact CSI parameter-byte substring, including private markers */
+  parameterBytes?: string
+  /** Leading CSI private marker bytes (<, =, >, or ?) */
+  privateMarker?: string
+  /** Exact CSI intermediate-byte substring */
+  intermediateBytes?: string
   /** Final character (for CSI sequences) */
   final?: string
 }
@@ -62,6 +74,12 @@ export enum ParserState {
   OSC = 3,
   /** DCS sequence started (ESC P) */
   DCS = 4,
+  /** SOS sequence started (ESC X) */
+  SOS = 5,
+  /** PM sequence started (ESC ^) */
+  PM = 6,
+  /** APC sequence started (ESC _) */
+  APC = 7,
 }
 
 /**
@@ -69,11 +87,7 @@ export enum ParserState {
  */
 export interface StripOptions {
   /**
-   * Strip all ANSI codes (default: true)
-   */
-  stripAll?: boolean
-  /**
-   * Preserve specific ANSI types (if stripAll is false)
+   * Preserve specific ANSI types while stripping all others
    */
   preserve?: AnsiType[]
 }

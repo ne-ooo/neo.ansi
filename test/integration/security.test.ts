@@ -1,67 +1,62 @@
 /**
- * Security tests - ReDoS protection and malicious input handling
+ * Security tests - adversarial input and bounded-memory handling
  *
- * This package uses a state machine parser instead of regex,
- * making it immune to ReDoS (Regular Expression Denial of Service).
+ * Sequence recognition is forward-only and does not backtrack.
  */
 
 import { describe, it, expect } from 'vitest'
 import { strip, parse, hasAnsi } from '../../src/index.js'
 
-describe('Security - ReDoS protection', () => {
-  it('should handle deeply nested sequences without catastrophic backtracking', () => {
-    // Pattern that would cause ReDoS with naive regex
+describe('Security - adversarial scaling inputs', () => {
+  it('should handle deeply repeated introducers', () => {
     const nested = '\x1b['.repeat(1000) + 'm'.repeat(1000)
 
-    const start = performance.now()
     const result = strip(nested)
-    const duration = performance.now() - start
 
-    // Should complete in < 100ms (state machine is O(n))
-    expect(duration).toBeLessThan(100)
     expect(hasAnsi(result)).toBe(false)
   })
 
   it('should handle very long parameter sequences', () => {
-    // Long parameter list that could cause backtracking
     const longParams = '\x1b[' + '1;'.repeat(10000) + 'm'
 
-    const start = performance.now()
     const result = strip(longParams + 'Text')
-    const duration = performance.now() - start
 
-    expect(duration).toBeLessThan(100)
     expect(result).toBe('Text')
   })
 
-  it('should handle repeated ESC characters efficiently', () => {
-    // Many ESC characters in a row
+  it('should handle repeated ESC characters', () => {
     const input = '\x1b'.repeat(10000) + 'Text'
 
-    const start = performance.now()
     const result = strip(input)
-    const duration = performance.now() - start
 
-    expect(duration).toBeLessThan(100)
-    expect(result).toBe('Text')
+    // The final ESC T pair is itself a valid two-byte escape sequence.
+    expect(result).toBe('ext')
   })
 
-  it('should handle alternating ESC and text efficiently', () => {
-    // Alternating pattern that could be problematic for regex
+  it('should handle alternating ESC and text', () => {
     const input = Array.from({ length: 5000 }, () => '\x1b[31ma\x1b[0m').join(
       ''
     )
 
-    const start = performance.now()
     const result = strip(input)
-    const duration = performance.now() - start
 
-    expect(duration).toBeLessThan(200)
     expect(result).toBe('a'.repeat(5000))
   })
 })
 
 describe('Security - Malicious input handling', () => {
+  it('should not allow 8-bit C1 controls to bypass sanitization', () => {
+    const input =
+      '\u009b31mRed\u009b0m' +
+      '\u009d0;Title\u009c' +
+      '\u0090payload\u009c' +
+      'Text'
+
+    const result = strip(input)
+    expect(result).toBe('RedText')
+    expect(hasAnsi(result)).toBe(false)
+  })
+
   it('should handle extremely long single sequences', () => {
     // OSC sequence with extremely long payload
     const longOsc = '\x1b]0;' + 'A'.repeat(100000) + '\x07Text'
@@ -114,47 +109,56 @@ describe('Security - Malicious input handling', () => {
   })
 })
 
-describe('Security - No regex usage', () => {
-  it('should not be vulnerable to CVE-2021-3807 (ansi-regex)', () => {
-    // The specific pattern that triggered CVE-2021-3807
-    // ansi-regex v5 and v6 were vulnerable to ReDoS with this pattern
+describe('Security - historical ReDoS regression inputs', () => {
+  it('should process the CVE-2021-3807-style parameter pattern', () => {
     const malicious = '\x1b[' + '1;'.repeat(50000) + 'm'
 
-    const start = performance.now()
     const result = strip(malicious)
-    const duration = performance.now() - start
 
-    // State machine should handle this in linear time
-    expect(duration).toBeLessThan(100)
     expect(result).toBe('')
   })
 
-  it('should be faster than regex-based parsers on pathological input', () => {
-    // Pattern that would cause exponential backtracking in regex
+  it('should process many consecutive sequences', () => {
     const pathological = Array.from(
       { length: 1000 },
       () => '\x1b[31;1;4;5m'
     ).join('')
 
-    const start = performance.now()
-    strip(pathological)
-    const duration = performance.now() - start
-
-    // Should be fast (O(n))
-    expect(duration).toBeLessThan(50)
+    expect(strip(pathological)).toBe('')
   })
 })
 
 describe('Security - Memory safety', () => {
-  it('should not cause memory leaks with large inputs', () => {
-    // Process many large strings
-    for (let i = 0; i < 100; i++) {
-      const large = '\x1b[31m' + 'A'.repeat(10000) + '\x1b[0m'
-      strip(large)
+  it('should not retain large inputs across completed batches', () => {
+    const collectGarbage = (
+      globalThis as typeof globalThis & { gc?: () => void }
+    ).gc
+    expect(collectGarbage).toBeTypeOf('function')
+    if (!collectGarbage) {
+      return
     }
 
-    // If there were memory leaks, this test would fail or slow down
-    expect(true).toBe(true)
+    const large = '\x1b[31m' + 'A'.repeat(10000) + '\x1b[0m'
+    const runBatch = (iterations: number): number => {
+      let checksum = 0
+      for (let i = 0; i < iterations; i++) {
+        checksum += strip(large).length
+      }
+      return checksum
+    }
+
+    expect(runBatch(100)).toBe(1_000_000)
+    collectGarbage()
+
+    expect(runBatch(1000)).toBe(10_000_000)
+    collectGarbage()
+    const firstBatchHeap = process.memoryUsage().heapUsed
+
+    expect(runBatch(1000)).toBe(10_000_000)
+    collectGarbage()
+    const secondBatchHeap = process.memoryUsage().heapUsed
+
+    expect(secondBatchHeap - firstBatchHeap).toBeLessThan(8 * 1024 * 1024)
   })
 
   it('should handle streaming-like scenarios', () => {

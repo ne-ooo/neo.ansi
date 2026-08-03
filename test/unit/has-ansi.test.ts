@@ -32,6 +32,16 @@ describe('hasAnsi', () => {
     expect(hasAnsi('\x1bP1$r\x07')).toBe(true)
   })
 
+  it('should detect 8-bit C1 forms', () => {
+    expect(hasAnsi('\u009b31mRed\u009b0m')).toBe(true)
+    expect(hasAnsi('\u009d0;Title\u009c')).toBe(true)
+    expect(hasAnsi('\u0090payload\u009c')).toBe(true)
+    expect(hasAnsi('\u0098payload\u009c')).toBe(true)
+    expect(hasAnsi('\u009epayload\u009c')).toBe(true)
+    expect(hasAnsi('\u009fpayload\u009c')).toBe(true)
+    expect(hasAnsi('\u009c')).toBe(true)
+  })
+
   it('should handle simple escapes', () => {
     expect(hasAnsi('\x1b7')).toBe(true)
     expect(hasAnsi('\x1b8')).toBe(true)

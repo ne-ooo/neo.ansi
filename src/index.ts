@@ -1,7 +1,7 @@
 /**
  * @lpm.dev/neo.ansi - Modern ANSI escape code parser and stripper
  *
- * Zero dependencies, ReDoS-safe, beats strip-ansi by 10%+
+ * Zero runtime dependencies with linear-time sequence recognition
  *
  * @example
  * ```ts
@@ -39,9 +39,15 @@ export { AnsiType, ParserState } from './types.js'
 // Constants (for advanced use cases)
 export {
   CHAR_CODE,
+  ANSI_BYTE_RANGE,
   CSI_FINAL_BYTE,
   CSI_COMMANDS,
   isDigit,
   isCsiFinalByte,
   isCsiParamByte,
+  isCsiPrivateByte,
+  isCsiIntermediateByte,
+  isEscapeIntermediateByte,
+  isEscapeFinalByte,
+  isAnsiC1Code,
 } from './core/constants.js'

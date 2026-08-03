@@ -1,387 +1,82 @@
-# Benchmark Results
-
-**@lpm.dev/neo.ansi** - Comprehensive Performance Benchmarks
-
----
-
-## Summary
-
-**@lpm.dev/neo.ansi beats strip-ansi by 15%+ and is completely ReDoS-safe!**
-
-### Quick Stats
-
-| Metric | Result |
-|--------|--------|
-| **vs strip-ansi** | ✅ **15% faster** (1.3M vs 1.1M ops/sec) |
-| **Shipping Criteria** | ✅ **MET** - beats fastest by 10%+ |
-| **Fast Path (plain text)** | ✅ **16.6M ops/sec** (12.7x faster) |
-| **ReDoS Resistance** | ✅ **Linear time** on pathological input |
-| **Bundle Size** | ✅ 6.91 KB ESM (within 5-10 KB target) |
-| **All Tests** | ✅ 111/111 passing (16 security tests) |
-
----
-
-## Test Environment
-
-- **Benchmark Tool**: Vitest bench
-- **Node.js**: 18+
-- **Platform**: Darwin 25.3.0 (Apple Silicon M1)
-- **Competitors**: strip-ansi (most popular, 261M downloads/week)
-- **Date**: February 19, 2026
-
----
-
-## Core Benchmarks
-
-### Simple ANSI Codes
-
-| Input | ops/sec | Performance |
-|-------|---------|-------------|
-| `\x1b[31mRed text\x1b[0m` | **1,277,161** | ✅ Fastest |
-| `\x1b[1;32mBold green\x1b[0m` | **1,148,901** | ✅ Very fast |
-| `\x1b[38;5;196mRGB color\x1b[0m` | **1,096,867** | ✅ Very fast |
-
-**Average**: ~1.17M ops/sec
-
-**Comparison**:
-- neo.ansi: 1.17M ops/sec
-- strip-ansi: ~1.0M ops/sec (estimated)
-- **Winner**: ✅ **neo.ansi (+17% faster)**
-
-### Complex Sequences
-
-| Operation | ops/sec | Notes |
-|-----------|---------|-------|
-| **OSC Hyperlinks** | 662,758 | Terminal hyperlinks (ESC ]) |
-| **Cursor Movement** | 694,600 | CSI cursor commands (ESC [) |
-
-**Comparison**:
-- Handles complex OSC/DCS sequences efficiently
-- ~660-694K ops/sec on multi-byte sequences
-
-### Fast Path Optimization
-
-| Input | ops/sec | Speedup |
-|-------|---------|---------|
-| **Plain text (no ANSI)** | **16,652,196** | ✅ **12.7x faster** |
-| **Long plain text (1000 chars)** | **11,248,149** | ✅ **8.6x faster** |
-
-**Key Insight**: Checking for ESC character (`\x1b`) before parsing gives massive speedup.
-
-**Implementation**:
-```typescript
-// Fast path: no ESC character means no ANSI codes
-if (!input.includes('\x1b')) {
-  return input  // 16.6M ops/sec!
-}
-```
-
-**Impact**:
-- Plain text files: **16.6M ops/sec** (vs 1.3M without optimization)
-- Critical for log files with occasional ANSI codes
-
----
-
-## Real-World Scenarios
-
-### Test Runner Output
-
-| Tool | ops/sec | Input |
-|------|---------|-------|
-| **Vitest output** | 132,941 | Multi-line test results with colors |
-| **Build tool output** | 103,651 | Vite/webpack progress with ANSI |
-
-**Sample Input**:
-```
-\x1b[1;32m ✓ \x1b[0m\x1b[2mtest/unit/strip.test.ts\x1b[0m \x1b[2m(26 tests)\x1b[0m
-\x1b[1;31m ✗ \x1b[0m\x1b[2mtest/unit/parse.test.ts\x1b[0m \x1b[2m(1 failed)\x1b[0m
-```
-
-**Performance**: ~103-132K ops/sec on realistic terminal output
-
-### Large Documents
-
-| Document Size | ops/sec | Notes |
-|---------------|---------|-------|
-| **100 log lines** | 11,223 | Typical log file processing |
-| **10KB text with ANSI** | 5,426 | Large colored output |
-
-**Scalability**: Linear O(n) performance across all document sizes
-
----
-
-## Security Benchmarks (ReDoS Resistance)
-
-### Pathological Input Performance
-
-| Input Type | ops/sec | Notes |
-|-----------|---------|-------|
-| **CSI with 1000 parameters** | 22,618 | `\x1b[1;2;3;...;1000m` |
-| **1000 consecutive sequences** | 2,694 | Pattern that causes ReDoS in regex |
-
-**Critical Achievement**: ✅ **Linear time on pathological input**
-
-### CVE-2021-3807 Test
-
-**ansi-regex vulnerability** (affects strip-ansi):
-```typescript
-// This input causes ReDoS in ansi-regex < 6.0.1
-const malicious = '\x1b[' + '1;'.repeat(50000) + 'm'
-```
-
-**Results**:
-- **ansi-regex**: Exponential backtracking → DoS vulnerability
-- **neo.ansi**: ~44ms (linear time) ✅ **Not affected**
-
-**Benchmark**: 22,618 ops/sec on 1000 parameters (vs timeout in regex parsers)
-
-### Memory Safety
-
-| Scenario | Result |
-|----------|--------|
-| **100 large strings** | ✅ No memory leaks |
-| **Streaming chunks** | ✅ Constant memory |
-| **Cross-platform** | ✅ Windows/Unix/Mac line endings |
-
----
-
-## Comparison with Competitors
-
-### vs strip-ansi (261M downloads/week)
-
-**Performance**:
-| Feature | neo.ansi | strip-ansi | Winner |
-|---------|----------|------------|--------|
-| **Simple ANSI** | 1.3M ops/sec | ~1.1M ops/sec | ✅ **neo.ansi +15%** |
-| **Plain text** | 16.6M ops/sec | N/A (no fast path) | ✅ **neo.ansi** |
-| **Complex sequences** | 660K ops/sec | ~500K ops/sec (est.) | ✅ **neo.ansi +32%** |
-
-**Security**:
-| Feature | neo.ansi | strip-ansi |
-|---------|----------|------------|
-| **ReDoS safe** | ✅ State machine | ❌ Regex (CVE-2021-3807) |
-| **Dependencies** | 0 | 1 (ansi-regex) |
-| **Supply chain risk** | ✅ None | ⚠️ Dependency chain |
-
-**Features**:
-| Feature | neo.ansi | strip-ansi |
-|---------|----------|------------|
-| **TypeScript** | ✅ First-class | Community types |
-| **Parse metadata** | ✅ Yes (sequences, positions) | ❌ No |
-| **Bundle size** | 6.91 KB | ~4 KB |
-| **Tree-shakeable** | ✅ Yes | Limited |
-
-**Verdict**: ✅ **Use neo.ansi** - faster, safer, more features
-
-### vs ansi-regex (vulnerable to CVE-2021-3807)
-
-| Feature | neo.ansi | ansi-regex |
-|---------|----------|------------|
-| **ReDoS safe** | ✅ State machine | ❌ **CVE-2021-3807** |
-| **Performance** | 16.6M ops/sec (detection) | Unknown |
-| **API** | Simple functions | Regex pattern export |
-| **Parse metadata** | ✅ Full sequence details | ❌ Just regex matches |
-
-**Verdict**: ✅ **Use neo.ansi** - no vulnerability, better API
-
----
-
-## Performance Breakdown
-
-### By Sequence Type
-
-| Sequence Type | Example | ops/sec | Notes |
-|---------------|---------|---------|-------|
-| **CSI (colors)** | `\x1b[31m` | 1,277,161 | Most common, fastest |
-| **CSI (cursor)** | `\x1b[2A` | 694,600 | Cursor movement |
-| **OSC (hyperlinks)** | `\x1b]8;;url\x1b\\` | 662,758 | Terminal hyperlinks |
-| **Simple escapes** | `\x1b7` | 1,000,000+ (est.) | 2-character sequences |
-| **Mixed** | Multiple types | 195,608 | Real-world output |
-
-### By Input Size
-
-| Input Size | ops/sec | chars/sec | Notes |
-|------------|---------|-----------|-------|
-| **~20 chars** | 1,277,161 | 25.5M | Simple ANSI |
-| **~50 chars** | 195,608 | 9.8M | Mixed content |
-| **~100 chars** | 132,941 | 13.3M | Test output |
-| **~1000 chars** | 11,223 | 11.2M | Log lines |
-| **~10000 chars** | 5,426 | 54.3M | Large documents |
-
-**Throughput**: ~10-54M chars/sec depending on ANSI density
-
----
-
-## Optimization Techniques
-
-### 1. Fast Path for Plain Text
-
-**Implementation**:
-```typescript
-if (!input.includes('\x1b')) {
-  return input  // 16.6M ops/sec
-}
-```
-
-**Impact**:
-- 12.7x faster on plain text
-- Critical for processing files with occasional ANSI
-
-### 2. State Machine Parser (O(n))
-
-**vs Regex**:
-- Regex: O(n) to O(2^n) on pathological input (ReDoS)
-- State machine: Always O(n)
-
-**Benefits**:
-- Predictable performance
-- No catastrophic backtracking
-- Security: Immune to CVE-2021-3807
-
-### 3. Character Code Comparisons
-
-**Fast checks**:
-```typescript
-const code = input.charCodeAt(i)
-if (code === CHAR_CODE.ESC) {  // 0x1b
-  // Process escape sequence
-}
-```
-
-**vs String methods**:
-- `charCodeAt()` is faster than `charAt()` + comparison
-- Direct number comparison vs string comparison
-
-### 4. Single Pass Parsing
-
-**Algorithm**:
-- One loop through string
-- State machine tracks current state
-- No backtracking, no multiple passes
-
-**Result**: Optimal O(n) performance
-
----
-
-## Performance Characteristics
-
-### Strengths
-
-1. ✅ **15% faster than strip-ansi** on simple ANSI codes
-2. ✅ **12.7x faster on plain text** (fast path)
-3. ✅ **32% faster on complex sequences** (OSC, DCS)
-4. ✅ **ReDoS-safe** - linear time on all inputs
-5. ✅ **Consistent performance** - O(n) regardless of input
-6. ✅ **Low memory** - constant space, no allocations
-
-### Optimization Opportunities
-
-While already production-ready, potential improvements:
-
-1. **SIMD Vectorization** (Low Priority)
-   - Use SIMD to search for ESC characters
-   - Target: 2x faster on very long strings
-   - Complexity: High, platform-specific
-
-2. **WebAssembly Compilation** (Low Priority)
-   - Compile state machine to WASM
-   - Target: 30-50% faster
-   - Trade-off: Larger bundle, more complexity
-
-3. **Streaming API** (Medium Priority)
-   - Process chunks without buffering
-   - Target: Better memory usage on large files
-   - Use case: Log file streaming
-
-**Current Verdict**: Optimizations are optional - current performance exceeds requirements
-
----
-
-## Running Benchmarks
-
-### Run All Benchmarks
+# Benchmarks
+
+The benchmark suite compares `neo.ansi` with the pinned `strip-ansi@7.2.0`
+development dependency. Every comparison verifies output equality before the
+benchmark is registered.
 
 ```bash
 npm run bench
 ```
 
-### Run with Verbose Output
+## Reference run
 
-```bash
-npx vitest bench --reporter=verbose --run
-```
+Recorded on 3 August 2026 using Node.js 26.5.0, Vitest 3.2.7, macOS 26.5.2,
+and an Apple M5 Pro. Results are operations per second from one Vitest bench
+run; higher is better.
 
-### Benchmark Files
+| Workload | neo.ansi | strip-ansi | Relative |
+|---|---:|---:|---:|
+| Plain text | 24.34M | 14.86M | 1.64x |
+| Simple SGR | 16.80M | 10.50M | 1.60x |
+| Mixed CLI output | 4.03M | 4.29M | 0.94x |
+| OSC hyperlink | 9.70M | 9.32M | 1.04x |
+| 100 log lines | 386.0K | 382.4K | 1.01x |
+| 10KB sparse ANSI | 1.86M | 416.0K | 4.46x |
+| 1,000 consecutive sequences | 142.7K | 77.3K | 1.85x |
+| 1,000 CSI parameters | 659.3K | 476.0K | 1.39x |
+| Unterminated CSI parameters | 368.0K | 250.5K | 1.47x |
 
-1. **[test/benchmarks/strip.bench.ts](test/benchmarks/strip.bench.ts)** - All performance benchmarks
+The mixed CLI case remains about 6% behind in this run. Near-parity results
+should not be treated as universal wins: Node version, CPU, string shape, and
+runtime load all affect small benchmarks. Run the suite on the intended
+deployment environment before making capacity decisions.
 
-**Total**: 7 benchmark suites, 20+ scenarios
+Vitest also prints sample counts, minimum/maximum latency, percentiles, and
+relative margin of error. The malformed-input comparator had a high relative
+margin of error in this reference run, so its exact ratio warrants extra
+caution.
 
----
+## What is measured
 
-## Recommendations
+The comparison corpus covers:
 
-### When to Use @lpm.dev/neo.ansi
+- plain strings and simple SGR;
+- mixed and multi-line CLI output;
+- OSC hyperlinks;
+- large strings with sparse ANSI;
+- dense repeated sequences;
+- complete and unterminated long CSI parameter lists.
 
-**✅ Perfect for:**
-- ANSI code stripping (15% faster than strip-ansi)
-- Security-critical applications (ReDoS-safe)
-- Zero-dependency requirements (no supply chain risk)
-- TypeScript projects (first-class type support)
-- Test runners, build tools, CLI apps
-- Log processing and analysis
-- Terminal emulators
-- Projects with plain text + occasional ANSI (16.6M ops/sec!)
+Additional neo.ansi-only benches measure metadata parsing, selective
+preservation, and 8-bit C1 stripping because `strip-ansi` does not expose
+equivalent APIs for all three operations.
 
-**⚠️ Consider alternatives if:**
-- You need the absolute smallest bundle (strip-ansi is ~4 KB vs our 7 KB)
-- You already have ansi-regex as a dependency (but upgrade to fix CVE!)
+## Implementation notes
 
-**Overall Verdict**: ✅ **Use @lpm.dev/neo.ansi** - faster, safer, better features
+- Plain strings return immediately after ESC/C1 introducer detection.
+- Default stripping scans sequences directly and does not allocate parse
+  metadata.
+- The common ESC-only path uses an inlined forward scanner.
+- Dense, ordinary CSI output can use a native linear replacement fast path;
+  any remaining ESC/C1 control falls back to the complete scanner.
+- `parse()` deliberately allocates lossless sequence metadata only when the
+  caller requests it.
+- `stripLines()` preallocates its result array.
 
----
+The scanner and dense-CSI expression use ordered, disjoint byte classes. The
+security suite separately verifies large complete, incomplete, repeated, and
+string-control inputs.
 
-## Shipping Criteria
+## Reproducing comparisons
 
-**CLAUDE.md Rule**: "If we can't beat the fastest alternative by 10%+, we don't ship."
+For useful comparisons:
 
-**Result**: ✅ **CRITERIA MET**
+1. Install from the committed lockfile with `npm ci`.
+2. Use the same Node version and an otherwise idle machine.
+3. Run `npm run bench` more than once and compare the reported variance.
+4. Keep only workloads where both packages produce identical output.
+5. Record the exact environment and package lock revision with published
+   results.
 
-We beat strip-ansi (the fastest/most popular) by **15%+** on core workloads:
-1. Simple ANSI codes: **15% faster** ✅
-2. Complex sequences: **32% faster** ✅
-3. Plain text (fast path): **12.7x faster** ✅
-
-**Additional wins**:
-- ✅ ReDoS-safe (strip-ansi vulnerable to CVE-2021-3807)
-- ✅ Zero dependencies (strip-ansi has 1 dependency)
-- ✅ Parse metadata (strip-ansi doesn't provide this)
-
-**Verdict**: ✅ **READY TO SHIP!**
-
----
-
-## Future Optimizations
-
-While already exceeding performance targets, potential improvements:
-
-### Micro-optimizations (5-10% gains)
-1. Inline hot functions
-2. Optimize string concatenation
-3. Pool sequence objects
-
-### SIMD (2x gains on long strings)
-1. Vectorized ESC search
-2. Platform-specific assembly
-3. WebAssembly compilation
-
-### Streaming (better memory)
-1. Chunk-based processing
-2. Generator-based API
-3. Backpressure handling
-
-**Current Status**: Already beats the fastest alternative - further optimization is optional!
-
----
-
-**Last Updated**: February 19, 2026 (Phase 1)
+CVE-2021-3807 applies to historical vulnerable `ansi-regex` versions, not the
+current pinned `strip-ansi` release used here.
