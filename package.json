@@ -1,6 +1,6 @@
 {
   "name": "@lpm.dev/neo.ansi",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Modern, zero-dependency ANSI escape code parser and stripper",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -16,7 +16,7 @@
   },
   "files": [
     "dist",
-    ".lpm",
+    ".lpm/skills",
     "README.md",
     "LICENSE"
   ],

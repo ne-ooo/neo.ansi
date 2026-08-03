@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-03
+
 ### Fixed
 
 - Recognize 8-bit C1 forms of CSI, OSC, DCS, SOS, PM, APC, and ST
