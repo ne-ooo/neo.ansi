@@ -94,33 +94,21 @@ const clean = strip(entireLogFile)
 
 ## Performance Characteristics
 
-| Input Type | ops/sec | Notes |
-|-----------|---------|-------|
-| Plain text (no ANSI) | 16.6M | Fast path — `includes('\x1b')` returns false |
-| Simple colors/styles | 1.3M | Typical colored log line |
-| Complex (OSC, DCS) | 660K-695K | Hyperlinks, device control |
-| Mixed content | 195K | Various sequence types |
-| Real-world CLI output | 103K-133K | npm, git, test runners |
-| 100 log lines batch | 11K | Batch processing |
-| 10KB text with ANSI | 5.4K | Large buffer |
-
-The fast path is critical: if most of your input is plain text (no ANSI), `strip()` is essentially free at 16.6M ops/sec.
+`strip()` has fast paths for plain text, common ESC-only output, and dense CSI output. The bundled suite performs output-equivalent comparisons against a pinned `strip-ansi` version. Absolute performance still depends on the Node/browser version, input distribution, and hardware; see `BENCHMARKS.md` for the recorded environment and results.
 
 ## ReDoS Immunity
 
-The state machine parser is O(n) for **all** inputs. This is the primary reason to choose neo.ansi over regex-based alternatives in production.
+Complete sequence recognition is forward-only and O(n). The dense-CSI fast path uses ordered, disjoint byte classes and falls back to the scanner if an ESC/C1 control remains.
 
-Pathological inputs that would freeze regex-based strippers:
+The security suite includes patterns that affected historical vulnerable regex implementations:
 
-| Pattern | neo.ansi | regex-based |
-|---------|---------|-------------|
-| `\x1b[` + `"1;"` x 50,000 + `m` | <100ms | Minutes (catastrophic backtracking) |
-| 1,000 nested `\x1b[` sequences | Linear time | Exponential |
-| 100K-char OSC payload | Linear time | Exponential |
+| Pattern | Expected scaling |
+|---------|------------------|
+| `\x1b[` + `"1;"` x 50,000 + `m` | Linear |
+| 1,000 repeated introducers | Linear |
+| 100K-character OSC payload | Linear |
 
-In log processing pipelines where you don't control the input (user data, third-party services), a single malicious string can peg CPU at 100% for minutes with a regex stripper. neo.ansi processes it in milliseconds.
-
-This is tested in `test/integration/security.test.ts` including the exact pattern from CVE-2021-3807 (the `ansi-regex` vulnerability).
+This is tested in `test/integration/security.test.ts`, including a pattern associated with CVE-2021-3807. Current fixed `ansi-regex` releases are not affected by that historical advisory.
 
 ## Allocation Costs
 
@@ -129,13 +117,13 @@ Each `parse()` call allocates:
 - One `ParseResult` object
 - One string for `text`
 - One array for `sequences`
-- One `AnsiSequence` object per sequence (with `type`, `raw`, `start`, `end`, optional `params`, `final`)
+- One `AnsiSequence` object per sequence, including raw bytes, positions, and optional CSI metadata
 
 For a typical colored log line (`\x1b[32m[INFO]\x1b[0m message`), that's 2 sequence objects + the wrapper. At 100K+ lines/sec, this GC pressure is measurable.
 
-`strip()` calls `parse()` internally, so the allocations still happen — they're just immediately eligible for GC. There is no allocation-free strip mode.
+`strip()` does not call `parse()`. It scans directly, allocates no sequence metadata, and returns the original string unchanged on its plain-text path. Inputs that contain ANSI still allocate the stripped output string and may allocate string fragments internally.
 
-For extreme throughput requirements, batch processing with `stripLines()` amortizes the per-call overhead.
+`stripLines()` preallocates the output array, but each ANSI-containing line still needs its stripped output string.
 
 ## Integration with Log Processing
 

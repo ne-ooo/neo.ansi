@@ -2,17 +2,18 @@
  * Check if string contains ANSI escape codes
  *
  * Fast detection without full parsing.
- * Performance: 200M+ checks/sec for strings without ANSI
  */
+
+import { findNextAnsiIndex } from '../core/scanner.js'
 
 /**
  * Check if string contains ANSI escape codes
  *
- * This is a fast check that looks for ESC characters without
- * doing full parsing. Useful for conditionally processing strings.
+ * This is a fast check for the 7-bit ESC introducer and supported 8-bit C1
+ * introducers/terminators. It intentionally does not perform full parsing.
  *
  * @param input - Input string to check
- * @returns true if string contains ESC characters
+ * @returns true if the string contains ESC or a supported C1 control
  *
  * @example
  * ```ts
@@ -22,8 +23,7 @@
  * ```
  */
 export function hasAnsi(input: string): boolean {
-  // Fast path using string search (fastest method)
-  return input.includes('\x1b')
+  return findNextAnsiIndex(input) !== -1
 }
 
 /**

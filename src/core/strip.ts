@@ -1,18 +1,116 @@
 /**
  * Strip ANSI escape codes from strings
  *
- * Fast, zero-dependency implementation using state machine parser.
- * Performance: 100M+ chars/sec, beats strip-ansi by 10%+
+ * Zero-dependency implementation using allocation-light scanners.
  */
 
-import { parse } from './state-machine.js'
+import {
+  findNextAnsiIndex,
+  findNextC1AnsiIndex,
+  scanAnsiSequence,
+  scannedSequenceEnd,
+  scannedSequenceType,
+} from './scanner.js'
 import type { StripOptions } from '../types.js'
 
+// The quantified byte classes are disjoint, so this common-CSI expression is
+// linear. Complex, malformed, or non-CSI input falls back to the scanner.
+const CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g
+
 /**
- * Strip all ANSI escape codes from a string
+ * Strip the overwhelmingly common ESC-only case without crossing the scanner
+ * function boundary for every sequence. Keep this grammar in sync with
+ * scanAnsiSequence(); differential tests verify both implementations agree.
+ */
+function stripEscSequences(input: string, firstSequenceStart: number): string {
+  const len = input.length
+  let text = ''
+  let textStart = 0
+  let sequenceStart = firstSequenceStart
+
+  while (sequenceStart !== -1) {
+    let cursor = sequenceStart + 1
+
+    if (cursor < len) {
+      const code = input.charCodeAt(cursor)
+
+      if (code === 0x5b) {
+        // CSI: ESC [ parameter bytes intermediate bytes final byte
+        cursor++
+        while (cursor < len) {
+          const parameter = input.charCodeAt(cursor)
+          if (parameter < 0x30 || parameter > 0x3f) break
+          cursor++
+        }
+        while (cursor < len) {
+          const intermediate = input.charCodeAt(cursor)
+          if (intermediate < 0x20 || intermediate > 0x2f) break
+          cursor++
+        }
+        if (cursor < len) {
+          const finalByte = input.charCodeAt(cursor)
+          if (finalByte >= 0x40 && finalByte <= 0x7e) cursor++
+        }
+      } else if (
+        code === 0x5d ||
+        code === 0x50 ||
+        code === 0x58 ||
+        code === 0x5e ||
+        code === 0x5f
+      ) {
+        // OSC, DCS, SOS, PM, and APC string controls.
+        const isOsc = code === 0x5d
+        cursor++
+        while (cursor < len) {
+          const current = input.charCodeAt(cursor)
+          if (isOsc && current === 0x07) {
+            cursor++
+            break
+          }
+          if (
+            current === 0x1b &&
+            cursor + 1 < len &&
+            input.charCodeAt(cursor + 1) === 0x5c
+          ) {
+            cursor += 2
+            break
+          }
+          cursor++
+        }
+      } else if (code >= 0x30 && code <= 0x7e) {
+        // Two-byte ESC sequence.
+        cursor++
+      } else if (code >= 0x20 && code <= 0x2f) {
+        // ESC intermediates followed by an optional final byte.
+        do {
+          cursor++
+        } while (
+          cursor < len &&
+          input.charCodeAt(cursor) >= 0x20 &&
+          input.charCodeAt(cursor) <= 0x2f
+        )
+        if (cursor < len) {
+          const finalByte = input.charCodeAt(cursor)
+          if (finalByte >= 0x30 && finalByte <= 0x7e) cursor++
+        }
+      }
+    }
+
+    if (sequenceStart > textStart) {
+      text += input.slice(textStart, sequenceStart)
+    }
+    textStart = cursor
+    sequenceStart = input.indexOf('\x1b', cursor)
+  }
+
+  return textStart < len ? text + input.slice(textStart) : text
+}
+
+/**
+ * Strip supported ANSI escape sequences from a string
  *
  * This is the primary function for removing ANSI codes.
- * It handles all sequence types: CSI, OSC, DCS, and simple escapes.
+ * It handles CSI, string controls, simple ESC sequences, and 8-bit C1 forms.
  *
  * @param input - Input string with ANSI codes
  * @param options - Optional configuration for stripping behavior
@@ -31,37 +129,67 @@ import type { StripOptions } from '../types.js'
  * ```
  */
 export function strip(input: string, options?: StripOptions): string {
-  // Fast path: no ESC character means no ANSI codes
-  if (!input.includes('\x1b')) {
+  const firstEsc = input.indexOf('\x1b')
+  const preserve = options?.preserve
+  const shouldPreserve = preserve !== undefined && preserve.length > 0
+
+  if (
+    !shouldPreserve &&
+    firstEsc !== -1 &&
+    input.length >= 64 &&
+    input.charCodeAt(firstEsc + 1) === 0x5b
+  ) {
+    const probe = input.slice(firstEsc + 2, firstEsc + 66)
+    const nextEsc = probe.indexOf('\x1b')
+
+    if (nextEsc !== -1 && probe.indexOf('\x1b', nextEsc + 2) !== -1) {
+      const commonCsiText = input.replace(CSI_SEQUENCE_PATTERN, '')
+      if (
+        commonCsiText.indexOf('\x1b') === -1 &&
+        findNextC1AnsiIndex(commonCsiText) === -1
+      ) {
+        return commonCsiText
+      }
+    }
+  }
+
+  const firstC1 = findNextC1AnsiIndex(input)
+  if (firstEsc === -1 && firstC1 === -1) {
     return input
   }
 
-  // Use state machine parser to extract text and sequences
-  const result = parse(input)
-
-  // If no preserve option, return fully stripped text
-  if (!options?.preserve || options.preserve.length === 0) {
-    return result.text
+  if (!shouldPreserve && firstC1 === -1) {
+    return stripEscSequences(input, firstEsc)
   }
 
-  // Reconstruct string, keeping sequences of the specified types
-  const preserved = new Set(options.preserve)
   const parts: string[] = []
   let cursor = 0
+  let sequenceStart =
+    firstEsc === -1
+      ? firstC1
+      : firstC1 === -1
+        ? firstEsc
+        : Math.min(firstEsc, firstC1)
 
-  for (const seq of result.sequences) {
-    // Include original text before this sequence
-    if (seq.start > cursor) {
-      parts.push(input.slice(cursor, seq.start))
+  while (sequenceStart !== -1) {
+    const packed = scanAnsiSequence(input, sequenceStart)
+    const end = scannedSequenceEnd(packed)
+
+    if (sequenceStart > cursor) {
+      parts.push(input.slice(cursor, sequenceStart))
     }
-    // Re-insert this sequence only if its type is preserved
-    if (preserved.has(seq.type)) {
-      parts.push(seq.raw)
+
+    if (shouldPreserve && preserve.includes(scannedSequenceType(packed))) {
+      parts.push(input.slice(sequenceStart, end))
     }
-    cursor = seq.end
+
+    cursor = end
+    sequenceStart =
+      firstC1 === -1
+        ? input.indexOf('\x1b', end)
+        : findNextAnsiIndex(input, end)
   }
 
-  // Include any remaining text after the last sequence
   if (cursor < input.length) {
     parts.push(input.slice(cursor))
   }
@@ -90,5 +218,9 @@ export function strip(input: string, options?: StripOptions): string {
  * ```
  */
 export function stripLines(lines: string[], options?: StripOptions): string[] {
-  return lines.map((line) => strip(line, options))
+  const result = new Array<string>(lines.length)
+  for (let i = 0; i < lines.length; i++) {
+    result[i] = strip(lines[i]!, options)
+  }
+  return result
 }
