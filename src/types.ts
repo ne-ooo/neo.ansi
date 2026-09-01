@@ -32,7 +32,7 @@ export enum AnsiType {
 export interface AnsiSequence {
   /** Type of ANSI sequence */
   type: AnsiType
-  /** Raw sequence including ESC */
+  /** Raw sequence including its introducer and any terminator */
   raw: string
   /** Start position in original string */
   start: number
@@ -87,9 +87,18 @@ export enum ParserState {
  */
 export interface StripOptions {
   /**
-   * Preserve specific ANSI types while stripping all others
+   * Preserve specific ANSI types while stripping all others.
+   * Use non-empty preservation only with trusted terminal output.
    */
   preserve?: AnsiType[]
+}
+
+/** Stateful ANSI stripper for input split across arbitrary string chunks. */
+export interface StreamingStripper {
+  /** Process one chunk and return the visible text completed by that chunk. */
+  write(chunk: string): string
+  /** Flush pending visible text, drop incomplete controls, and reset. */
+  end(): string
 }
 
 /**

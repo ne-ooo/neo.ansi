@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  LPM_VERSION: "0.71.0"
+  LPM_VERSION: "0.76.5"
 
 jobs:
   publish:

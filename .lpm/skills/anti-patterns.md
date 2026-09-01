@@ -99,29 +99,26 @@ stream.on('data', (chunk) => {
 Correct:
 
 ```typescript
-import { parse, strip, AnsiType } from '@lpm.dev/neo.ansi'
+import { StringDecoder } from 'node:string_decoder'
+import { createStreamingStripper } from '@lpm.dev/neo.ansi'
 
-let buffer = ''
+const decoder = new StringDecoder('utf8')
+const stripper = createStreamingStripper()
 
-stream.on('data', (rawChunk) => {
-  const input = buffer + rawChunk.toString()
-  buffer = ''
+stream.on('data', rawChunk => {
+  output.write(stripper.write(decoder.write(rawChunk)))
+})
 
-  const result = parse(input)
-  const lastSeq = result.sequences.at(-1)
-
-  if (lastSeq?.type === AnsiType.Unknown && lastSeq.end === input.length) {
-    buffer = lastSeq.raw
-    output.write(strip(input.slice(0, lastSeq.start)))
-  } else {
-    output.write(strip(input))
-  }
+stream.on('end', () => {
+  const tail = decoder.end()
+  if (tail) output.write(stripper.write(tail))
+  output.write(stripper.end())
 })
 ```
 
-ANSI sequences can split across chunk boundaries. If chunk 1 ends with `\x1b[31` and chunk 2 starts with `mWorld`, stripping each independently leaks `m` into the output as literal text. The parser marks incomplete sequences at EOF as `AnsiType.Unknown` — buffer them and prepend to the next chunk.
+ANSI sequences can split across chunk boundaries. If chunk 1 ends with `\x1b[31` and chunk 2 starts with `mWorld`, stripping each independently leaks `m` into the output as literal text. The stateful stripper carries only parser state across calls, so it neither leaks the split sequence nor buffers and repeatedly rescans an unbounded control-string payload. For byte streams, use Node.js `StringDecoder` instead of calling `toString()` on each chunk so a split UTF-8 character is not corrupted.
 
-Source: `src/core/state-machine.ts:199-210` — EOF handling, maintainer interview
+Source: `src/core/stream.ts`
 
 ### [MEDIUM] Assuming hasAnsiAll([]) returns true
 

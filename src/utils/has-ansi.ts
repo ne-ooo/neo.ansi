@@ -5,6 +5,7 @@
  */
 
 import { findNextAnsiIndex } from '../core/scanner.js'
+import { releaseRegexSubject } from '../core/string-memory.js'
 
 /**
  * Check if string contains ANSI escape codes
@@ -23,7 +24,9 @@ import { findNextAnsiIndex } from '../core/scanner.js'
  * ```
  */
 export function hasAnsi(input: string): boolean {
-  return findNextAnsiIndex(input) !== -1
+  const result = findNextAnsiIndex(input) !== -1
+  releaseRegexSubject(input.length)
+  return result
 }
 
 /**

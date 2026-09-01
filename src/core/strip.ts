@@ -11,11 +11,50 @@ import {
   scannedSequenceEnd,
   scannedSequenceType,
 } from './scanner.js'
+import {
+  isAnsiC1Code,
+  OSC_STRING_CANDIDATE_PATTERN,
+  STRING_CANDIDATE_PATTERN,
+  STRING_SEARCH_THRESHOLD,
+} from './constants.js'
+import { finalizeScannedString } from './string-memory.js'
 import type { StripOptions } from '../types.js'
+import { AnsiType } from '../types.js'
 
-// The quantified byte classes are disjoint, so this common-CSI expression is
-// linear. Complex, malformed, or non-CSI input falls back to the scanner.
-const CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g
+const MAX_CONCATENATED_TEXT_PARTS = 256
+
+function ansiTypeBit(type: AnsiType): number {
+  switch (type) {
+    case AnsiType.CSI:
+      return 1 << 0
+    case AnsiType.OSC:
+      return 1 << 1
+    case AnsiType.DCS:
+      return 1 << 2
+    case AnsiType.SOS:
+      return 1 << 3
+    case AnsiType.PM:
+      return 1 << 4
+    case AnsiType.APC:
+      return 1 << 5
+    case AnsiType.Simple:
+      return 1 << 6
+    case AnsiType.Unknown:
+      return 1 << 7
+  }
+}
+
+function createPreserveMask(preserve: readonly AnsiType[] | undefined): number {
+  let mask = 0
+  if (!preserve) return mask
+
+  for (let i = 0; i < preserve.length; i++) {
+    const type = preserve[i]
+    if (type !== undefined) mask |= ansiTypeBit(type)
+  }
+
+  return mask
+}
 
 /**
  * Strip the overwhelmingly common ESC-only case without crossing the scanner
@@ -25,6 +64,8 @@ const CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g
 function stripEscSequences(input: string, firstSequenceStart: number): string {
   const len = input.length
   let text = ''
+  let textPartCount = 0
+  let parts: string[] | undefined
   let textStart = 0
   let sequenceStart = firstSequenceStart
 
@@ -62,6 +103,18 @@ function stripEscSequences(input: string, firstSequenceStart: number): string {
         const isOsc = code === 0x5d
         cursor++
         while (cursor < len) {
+          if (len >= 256 && len - cursor >= STRING_SEARCH_THRESHOLD) {
+            const pattern = isOsc
+              ? OSC_STRING_CANDIDATE_PATTERN
+              : STRING_CANDIDATE_PATTERN
+            pattern.lastIndex = cursor
+            if (!pattern.test(input)) {
+              cursor = len
+              break
+            }
+            cursor = pattern.lastIndex - 1
+          }
+
           const current = input.charCodeAt(cursor)
           if (isOsc && current === 0x07) {
             cursor++
@@ -73,6 +126,20 @@ function stripEscSequences(input: string, firstSequenceStart: number): string {
             input.charCodeAt(cursor + 1) === 0x5c
           ) {
             cursor += 2
+            break
+          }
+          if (current === 0x18 || current === 0x1a) {
+            cursor++
+            break
+          }
+          if (current === 0x1b) {
+            // Reprocess a non-ST ESC as the start of a new sequence.
+            break
+          }
+          if (current >= 0x80 && current <= 0x9f) {
+            // Every C1 control cancels the string. Supported C1 controls use
+            // the general scanner; consume unsupported controls here.
+            cursor++
             break
           }
           cursor++
@@ -97,13 +164,35 @@ function stripEscSequences(input: string, firstSequenceStart: number): string {
     }
 
     if (sequenceStart > textStart) {
-      text += input.slice(textStart, sequenceStart)
+      const part = input.slice(textStart, sequenceStart)
+      if (parts) {
+        parts.push(part)
+      } else if (textPartCount < MAX_CONCATENATED_TEXT_PARTS) {
+        text += part
+        textPartCount++
+      } else {
+        parts = [text, part]
+        text = ''
+      }
     }
     textStart = cursor
     sequenceStart = input.indexOf('\x1b', cursor)
   }
 
-  return textStart < len ? text + input.slice(textStart) : text
+  if (textStart < len) {
+    const part = input.slice(textStart)
+    if (parts) {
+      parts.push(part)
+    } else if (textPartCount < MAX_CONCATENATED_TEXT_PARTS) {
+      text += part
+    } else {
+      parts = [text, part]
+    }
+  }
+
+  return parts
+    ? finalizeScannedString(input.length, parts.join(''), true, true)
+    : finalizeScannedString(input.length, text, false, true)
 }
 
 /**
@@ -129,34 +218,23 @@ function stripEscSequences(input: string, firstSequenceStart: number): string {
  * ```
  */
 export function strip(input: string, options?: StripOptions): string {
-  const firstEsc = input.indexOf('\x1b')
-  const preserve = options?.preserve
-  const shouldPreserve = preserve !== undefined && preserve.length > 0
+  const firstCode = input.charCodeAt(0)
+  const firstAnsi =
+    firstCode === 0x1b || isAnsiC1Code(firstCode)
+      ? 0
+      : findNextAnsiIndex(input)
+  if (firstAnsi === -1) return finalizeScannedString(input.length, input)
 
-  if (
-    !shouldPreserve &&
-    firstEsc !== -1 &&
-    input.length >= 64 &&
-    input.charCodeAt(firstEsc + 1) === 0x5b
-  ) {
-    const probe = input.slice(firstEsc + 2, firstEsc + 66)
-    const nextEsc = probe.indexOf('\x1b')
+  const firstIsEsc = input.charCodeAt(firstAnsi) === 0x1b
+  const firstEsc = firstIsEsc
+    ? firstAnsi
+    : input.indexOf('\x1b', firstAnsi + 1)
+  const preserveMask = createPreserveMask(options?.preserve)
+  const shouldPreserve = preserveMask !== 0
 
-    if (nextEsc !== -1 && probe.indexOf('\x1b', nextEsc + 2) !== -1) {
-      const commonCsiText = input.replace(CSI_SEQUENCE_PATTERN, '')
-      if (
-        commonCsiText.indexOf('\x1b') === -1 &&
-        findNextC1AnsiIndex(commonCsiText) === -1
-      ) {
-        return commonCsiText
-      }
-    }
-  }
-
-  const firstC1 = findNextC1AnsiIndex(input)
-  if (firstEsc === -1 && firstC1 === -1) {
-    return input
-  }
+  const firstC1 = firstIsEsc
+    ? findNextC1AnsiIndex(input, firstAnsi + 1)
+    : firstAnsi
 
   if (!shouldPreserve && firstC1 === -1) {
     return stripEscSequences(input, firstEsc)
@@ -164,12 +242,7 @@ export function strip(input: string, options?: StripOptions): string {
 
   const parts: string[] = []
   let cursor = 0
-  let sequenceStart =
-    firstEsc === -1
-      ? firstC1
-      : firstC1 === -1
-        ? firstEsc
-        : Math.min(firstEsc, firstC1)
+  let sequenceStart = firstAnsi
 
   while (sequenceStart !== -1) {
     const packed = scanAnsiSequence(input, sequenceStart)
@@ -179,7 +252,10 @@ export function strip(input: string, options?: StripOptions): string {
       parts.push(input.slice(cursor, sequenceStart))
     }
 
-    if (shouldPreserve && preserve.includes(scannedSequenceType(packed))) {
+    if (
+      shouldPreserve &&
+      (preserveMask & ansiTypeBit(scannedSequenceType(packed))) !== 0
+    ) {
       parts.push(input.slice(sequenceStart, end))
     }
 
@@ -194,7 +270,12 @@ export function strip(input: string, options?: StripOptions): string {
     parts.push(input.slice(cursor))
   }
 
-  return parts.join('')
+  return finalizeScannedString(
+    input.length,
+    parts.join(''),
+    parts.length > 1,
+    true
+  )
 }
 
 /**

@@ -7,8 +7,15 @@
 
 import { isCsiPrivateByte } from './constants.js'
 import { findNextAnsiIndex, scanAnsiSequences } from './scanner.js'
+import {
+  copyScannedString,
+  detachScannedSubstring,
+  finalizeScannedString,
+} from './string-memory.js'
 import type { AnsiSequence, ParseResult } from '../types.js'
 import { AnsiType } from '../types.js'
+
+const METADATA_INPUT_COPY_THRESHOLD = 1024
 
 /**
  * Parse ANSI escape sequences from an input string.
@@ -19,15 +26,20 @@ import { AnsiType } from '../types.js'
 export function parse(input: string): ParseResult {
   const firstSequenceStart = findNextAnsiIndex(input)
   if (firstSequenceStart === -1) {
-    return { text: input, sequences: [] }
+    return {
+      text: finalizeScannedString(input.length, input),
+      sequences: [],
+    }
   }
 
+  const detachMetadata = input.length >= METADATA_INPUT_COPY_THRESHOLD
+  const source = detachMetadata ? input : copyScannedString(input)
   const sequences: AnsiSequence[] = []
   const textParts: string[] = []
   let textStart = 0
 
   scanAnsiSequences(
-    input,
+    source,
     firstSequenceStart,
     (
       type,
@@ -40,15 +52,21 @@ export function parse(input: string): ParseResult {
       finalIndex
     ) => {
       if (start > textStart) {
-        textParts.push(input.slice(textStart, start))
+        textParts.push(source.slice(textStart, start))
       }
 
       if (type === AnsiType.CSI) {
-        const parameterBytes = input.slice(parameterStart, parameterEnd)
-        const intermediateBytes = input.slice(
+        const parameterValue = source.slice(parameterStart, parameterEnd)
+        const parameterBytes = detachMetadata
+          ? detachScannedSubstring(input.length, parameterValue)
+          : parameterValue
+        const intermediateValue = source.slice(
           intermediateStart,
           intermediateEnd
         )
+        const intermediateBytes = detachMetadata
+          ? detachScannedSubstring(input.length, intermediateValue)
+          : intermediateValue
         let privateMarkerEnd = 0
 
         while (
@@ -58,24 +76,46 @@ export function parse(input: string): ParseResult {
           privateMarkerEnd++
         }
 
-        const privateMarker = parameterBytes.slice(0, privateMarkerEnd)
+        const privateMarkerValue = parameterBytes.slice(0, privateMarkerEnd)
+        const privateMarker = detachMetadata
+          ? detachScannedSubstring(input.length, privateMarkerValue)
+          : privateMarkerValue
         const parameterData = parameterBytes.slice(privateMarkerEnd)
+        const params =
+          parameterData.length === 0
+            ? []
+            : detachMetadata
+              ? parameterData
+                  .split(';')
+                  .map((parameter) =>
+                    detachScannedSubstring(input.length, parameter)
+                  )
+              : parameterData.split(';')
+        const rawValue = source.slice(start, end)
+        const finalValue = source.charAt(finalIndex)
 
         sequences.push({
           type,
-          raw: input.slice(start, end),
+          raw: detachMetadata
+            ? detachScannedSubstring(input.length, rawValue)
+            : rawValue,
           start,
           end,
-          params: parameterData.length === 0 ? [] : parameterData.split(';'),
+          params,
           parameterBytes,
           intermediateBytes,
           ...(privateMarker.length > 0 ? { privateMarker } : {}),
-          final: input.charAt(finalIndex),
+          final: detachMetadata
+            ? detachScannedSubstring(input.length, finalValue)
+            : finalValue,
         })
       } else {
+        const rawValue = source.slice(start, end)
         sequences.push({
           type,
-          raw: input.slice(start, end),
+          raw: detachMetadata
+            ? detachScannedSubstring(input.length, rawValue)
+            : rawValue,
           start,
           end,
         })
@@ -85,12 +125,17 @@ export function parse(input: string): ParseResult {
     }
   )
 
-  if (textStart < input.length) {
-    textParts.push(input.slice(textStart))
+  if (textStart < source.length) {
+    textParts.push(source.slice(textStart))
   }
 
   return {
-    text: textParts.join(''),
+    text: finalizeScannedString(
+      input.length,
+      textParts.join(''),
+      textParts.length > 1,
+      detachMetadata
+    ),
     sequences,
   }
 }

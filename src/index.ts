@@ -22,6 +22,7 @@
 
 // Core functions
 export { strip, stripLines } from './core/strip.js'
+export { createStreamingStripper } from './core/stream.js'
 export { parse } from './core/state-machine.js'
 
 // Utility functions
@@ -32,6 +33,7 @@ export type {
   AnsiSequence,
   ParseResult,
   StripOptions,
+  StreamingStripper,
 } from './types.js'
 
 export { AnsiType, ParserState } from './types.js'

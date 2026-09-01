@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { strip, parse, hasAnsi, AnsiType } from '../../src/index.js'
+import {
+  createStreamingStripper,
+  strip,
+  parse,
+  hasAnsi,
+} from '../../src/index.js'
 
 describe('Real-world use cases', () => {
   describe('Terminal output from test runners', () => {
@@ -140,30 +145,13 @@ describe('Real-world use cases', () => {
       expect(strip(combined)).toBe('Building... done\nOptimizing... done\n')
     })
 
-    it('should identify split OSC and DCS sequences for buffering', () => {
-      let buffer = ''
+    it('should strip OSC and DCS sequences split across chunks', () => {
+      const stripper = createStreamingStripper()
 
-      const processChunk = (chunk: string): string => {
-        const input = buffer + chunk
-        buffer = ''
-        const result = parse(input)
-        const lastSequence = result.sequences.at(-1)
-
-        if (
-          lastSequence?.type === AnsiType.Unknown &&
-          lastSequence.end === input.length
-        ) {
-          buffer = lastSequence.raw
-          return strip(input.slice(0, lastSequence.start))
-        }
-
-        return strip(input)
-      }
-
-      expect(processChunk('Hello \x1b]0;Tit')).toBe('Hello ')
-      expect(processChunk('le\x07World \x1bPpay')).toBe('World ')
-      expect(processChunk('load\x1b\\Done')).toBe('Done')
-      expect(buffer).toBe('')
+      expect(stripper.write('Hello \x1b]0;Tit')).toBe('Hello ')
+      expect(stripper.write('le\x07World \x1bPpay')).toBe('World ')
+      expect(stripper.write('load\x1b\\Done')).toBe('Done')
+      expect(stripper.end()).toBe('')
     })
   })
 

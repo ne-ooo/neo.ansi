@@ -6,17 +6,22 @@
  */
 
 import {
+  ANSI_INTRODUCER_PATTERN,
+  C1_ANSI_PATTERN,
   CHAR_CODE,
   isCsiFinalByte,
   isCsiIntermediateByte,
   isCsiParamByte,
+  isAnsiC1Code,
   isEscapeFinalByte,
   isEscapeIntermediateByte,
+  OSC_STRING_CANDIDATE_PATTERN,
+  REGEXP_SCAN_THRESHOLD,
+  STRING_CANDIDATE_PATTERN,
+  STRING_SEARCH_THRESHOLD,
 } from './constants.js'
 import { AnsiType } from '../types.js'
 
-const ANSI_INTRODUCER_PATTERN = /[\u001b\u0090\u0098\u009b-\u009f]/g
-const C1_ANSI_PATTERN = /[\u0090\u0098\u009b-\u009f]/g
 const SCAN_TYPE_COUNT = 8
 
 const SCAN_TYPE = {
@@ -43,16 +48,35 @@ export type AnsiSequenceVisitor = (
 
 /** Find the next supported ESC/C1 introducer at or after `fromIndex`. */
 export function findNextAnsiIndex(input: string, fromIndex = 0): number {
+  if (input.length - fromIndex < REGEXP_SCAN_THRESHOLD) {
+    for (let index = fromIndex; index < input.length; index++) {
+      const code = input.charCodeAt(index)
+      if (code === CHAR_CODE.ESC || isAnsiC1Code(code)) return index
+    }
+    return -1
+  }
+
   ANSI_INTRODUCER_PATTERN.lastIndex = fromIndex
-  const match = ANSI_INTRODUCER_PATTERN.exec(input)
-  return match?.index ?? -1
+  if (fromIndex === 0) {
+    const match = ANSI_INTRODUCER_PATTERN.exec(input)
+    return match?.index ?? -1
+  }
+  return ANSI_INTRODUCER_PATTERN.test(input)
+    ? ANSI_INTRODUCER_PATTERN.lastIndex - 1
+    : -1
 }
 
 /** Find the next supported 8-bit C1 control at or after `fromIndex`. */
 export function findNextC1AnsiIndex(input: string, fromIndex = 0): number {
+  if (input.length - fromIndex < REGEXP_SCAN_THRESHOLD) {
+    for (let index = fromIndex; index < input.length; index++) {
+      if (isAnsiC1Code(input.charCodeAt(index))) return index
+    }
+    return -1
+  }
+
   C1_ANSI_PATTERN.lastIndex = fromIndex
-  const match = C1_ANSI_PATTERN.exec(input)
-  return match?.index ?? -1
+  return C1_ANSI_PATTERN.test(input) ? C1_ANSI_PATTERN.lastIndex - 1 : -1
 }
 
 /** Decode the sequence end from the packed scanner result. */
@@ -179,6 +203,22 @@ export function scanAnsiSequence(input: string, start: number): number {
 
   if (stringType !== SCAN_TYPE.Unknown) {
     while (cursor < len) {
+      if (
+        len >= REGEXP_SCAN_THRESHOLD &&
+        len - cursor >= STRING_SEARCH_THRESHOLD
+      ) {
+        const pattern =
+          stringType === SCAN_TYPE.OSC
+            ? OSC_STRING_CANDIDATE_PATTERN
+            : STRING_CANDIDATE_PATTERN
+        pattern.lastIndex = cursor
+        if (!pattern.test(input)) {
+          cursor = len
+          break
+        }
+        cursor = pattern.lastIndex - 1
+      }
+
       const code = input.charCodeAt(cursor)
 
       if (stringType === SCAN_TYPE.OSC && code === CHAR_CODE.BEL) {
@@ -187,12 +227,31 @@ export function scanAnsiSequence(input: string, start: number): number {
       if (code === CHAR_CODE.C1_ST) {
         return packSequence(cursor + 1, stringType)
       }
-      if (
-        code === CHAR_CODE.ESC &&
-        cursor + 1 < len &&
-        input.charCodeAt(cursor + 1) === CHAR_CODE.BACKSLASH
-      ) {
-        return packSequence(cursor + 2, stringType)
+      if (code === CHAR_CODE.CAN || code === CHAR_CODE.SUB) {
+        return packSequence(cursor + 1, SCAN_TYPE.Unknown)
+      }
+      if (code === CHAR_CODE.ESC) {
+        if (
+          cursor + 1 < len &&
+          input.charCodeAt(cursor + 1) === CHAR_CODE.BACKSLASH
+        ) {
+          return packSequence(cursor + 2, stringType)
+        }
+
+        // A new ESC cancels the control string. Leave it unconsumed so the
+        // outer scanner can recognize the new sequence.
+        return packSequence(cursor, SCAN_TYPE.Unknown)
+      }
+      if (isAnsiC1Code(code)) {
+        // C1 ST was handled above; any other supported C1 introducer starts a
+        // new sequence and must not be swallowed as control-string payload.
+        return packSequence(cursor, SCAN_TYPE.Unknown)
+      }
+      if (code >= 0x80 && code <= 0x9f) {
+        // Every C1 control cancels a control string. Unsupported C1 controls
+        // are consumed with the canceled sequence rather than treated as
+        // standalone ANSI introducers.
+        return packSequence(cursor + 1, SCAN_TYPE.Unknown)
       }
       cursor++
     }

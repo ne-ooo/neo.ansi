@@ -109,6 +109,15 @@ describe('strip', () => {
       const input = 'Visit \x1b]8;;https://example.com\x1b\\example.com\x1b]8;;\x1b\\ for info'
       expect(strip(input)).toBe('Visit example.com for info')
     })
+
+    it.each(['\x18', '\x1a'])(
+      'should recover visible text after %j cancels OSC',
+      (cancel) => {
+        expect(strip(`Before\x1b]0;Title${cancel}Visible`)).toBe(
+          'BeforeVisible'
+        )
+      }
+    )
   })
 
   describe('DCS sequences (ESC P)', () => {
@@ -135,6 +144,61 @@ describe('strip', () => {
       '\u009fpayload\u009cText',
     ])('should strip %j', (input) => {
       expect(strip(input)).toBe('Text')
+    })
+  })
+
+  describe('Control-string cancellation', () => {
+    const stringControls = [
+      '\x1b]0;Title',
+      '\x1bPpayload',
+      '\x1bXpayload',
+      '\x1b^payload',
+      '\x1b_payload',
+    ] as const
+
+    it.each(stringControls)(
+      'should reprocess a non-ST ESC after %j',
+      (prefix) => {
+        expect(strip(`${prefix}\x1b[31mVisible\x1b[0m`)).toBe('Visible')
+      }
+    )
+
+    it.each(stringControls)(
+      'should recover after CAN and SUB cancel %j',
+      (prefix) => {
+        expect(strip(`${prefix}\x18Visible`)).toBe('Visible')
+        expect(strip(`${prefix}\x1aVisible`)).toBe('Visible')
+      }
+    )
+
+    it('should reprocess a nested C1 introducer', () => {
+      expect(strip('\x1b]0;Title\u009b31mVisible\u009b0m')).toBe('Visible')
+    })
+
+    it('should recover after every unsupported C1 control cancels a string', () => {
+      const supported = new Set([0x90, 0x98, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f])
+
+      for (let code = 0x80; code <= 0x9f; code++) {
+        if (supported.has(code)) continue
+        const c1 = String.fromCharCode(code)
+        expect(strip('Before\x1b]0;Title' + c1 + 'Visible')).toBe(
+          'BeforeVisible'
+        )
+        expect(strip('Before\x1bPpayload' + c1 + 'Visible')).toBe(
+          'BeforeVisible'
+        )
+        expect(strip('Before' + c1 + 'Visible')).toBe(
+          'Before' + c1 + 'Visible'
+        )
+      }
+    })
+
+    it('should not preserve a nested CSI as part of a canceled OSC', () => {
+      expect(
+        strip('\x1b]0;Title\x1b[31mVisible\x1b[0m', {
+          preserve: [AnsiType.OSC],
+        })
+      ).toBe('Visible')
     })
   })
 
@@ -245,6 +309,11 @@ describe('strip with StripOptions.preserve', () => {
 
   it('should strip all when preserve is empty array', () => {
     expect(strip('\x1b[31mRed\x1b[0m text', { preserve: [] })).toBe('Red text')
+  })
+
+  it('should handle duplicate preserve values in linear time', () => {
+    const preserve = new Array<AnsiType>(10_000).fill(AnsiType.CSI)
+    expect(strip('\x1b]0;Title\x07Text', { preserve })).toBe('Text')
   })
 
   it('should return original string when no ESC even with preserve option', () => {

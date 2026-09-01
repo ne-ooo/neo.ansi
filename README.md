@@ -1,42 +1,36 @@
 # @lpm.dev/neo.ansi
 
-**Modern, zero-dependency ANSI escape code parser and stripper**
+`@lpm.dev/neo.ansi` strips and inspects ANSI terminal sequences in Node.js and
+modern browsers.
 
-Uses linear-time scanning to strip and inspect terminal escape sequences.
+## Features
 
-## Why neo.ansi?
+- **Sequence support:** Recognizes CSI, OSC, DCS, SOS, PM, APC, simple ESC
+  sequences, and 8-bit C1 forms.
+- **Parsing:** Returns visible text and metadata for recognized sequences.
+- **Streaming:** Strips sequences that span string-chunk boundaries with
+  constant parser state.
+- **Work bounds:** Uses forward scanners with linear work for recognized input
+  classes.
+- **TypeScript support:** Includes strict type declarations.
+- **Dependency surface:** Has no runtime dependencies.
 
-The ANSI parsing ecosystem has several recurring problems:
+## Install
 
-1. **Security history**: Old `ansi-regex` releases were affected by **CVE-2021-3807**; current releases contain the fix
-2. **Supply Chain**: September 2025 attack compromised 27+ packages including strip-ansi, chalk, debug (2.6B weekly downloads affected)
-3. **Dependencies**: strip-ansi depends on ansi-regex, creating dependency chains
-4. **Inspection**: Regex-based strippers generally do not return parsed sequence metadata
-
-**neo.ansi solves all of these:**
-
-- ✅ **Zero runtime dependencies** - Reduced runtime supply-chain surface
-- ✅ **ReDoS-safe recognition** - Forward scanners and disjoint byte classes
-- ✅ **Fast path** - Plain strings return without full parsing
-- ✅ **TypeScript-first** - Full type safety
-- ✅ **Broad coverage** - CSI, OSC, DCS, SOS, PM, APC, simple ESC sequences, and 8-bit C1 forms
-- ✅ **Small bundle** - ~16.2 KB ESM, tree-shakeable
-- ✅ **Adversarial tests** - Includes malformed, incomplete, C1, and pathological inputs
-
-## Installation
+Install the package with LPM:
 
 ```bash
 lpm install @lpm.dev/neo.ansi
 ```
 
-## Quick Start
+## Quick start
 
 ```typescript
-import { strip, hasAnsi, parse } from "@lpm.dev/neo.ansi";
+import { hasAnsi, parse, strip } from "@lpm.dev/neo.ansi";
 
 // Strip ANSI codes
 strip("\x1b[31mRed text\x1b[0m");
-// => 'Red text'
+// => "Red text"
 
 // Check for ANSI codes
 hasAnsi("\x1b[31mRed\x1b[0m");
@@ -45,10 +39,10 @@ hasAnsi("\x1b[31mRed\x1b[0m");
 // Parse ANSI sequences
 const result = parse("\x1b[31mRed\x1b[0m");
 // {
-//   text: 'Red',
+//   text: "Red",
 //   sequences: [
-//     { type: 'csi', raw: '\x1b[31m', start: 0, end: 5, params: ['31'], final: 'm' },
-//     { type: 'csi', raw: '\x1b[0m', start: 8, end: 12, params: ['0'], final: 'm' }
+//     { type: "csi", raw: "\x1b[31m", start: 0, end: 5, params: ["31"], final: "m" },
+//     { type: "csi", raw: "\x1b[0m", start: 8, end: 12, params: ["0"], final: "m" }
 //   ]
 // }
 ```
@@ -57,32 +51,50 @@ const result = parse("\x1b[31mRed\x1b[0m");
 
 ### `strip(input: string, options?: StripOptions): string`
 
-Strip supported ANSI escape sequences from a string.
+Strips supported ANSI escape sequences from a string.
 
 ```typescript
 strip("\x1b[31mRed text\x1b[0m");
-// => 'Red text'
+// => "Red text"
 
 strip("\x1b[1;32mBold green\x1b[0m text");
-// => 'Bold green text'
+// => "Bold green text"
 
 // Handles CSI and terminal string-control sequences
 strip("Normal \x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ text");
-// => 'Normal link text'
+// => "Normal link text"
 ```
 
 ### `stripLines(lines: string[], options?: StripOptions): string[]`
 
-Strip ANSI codes from multiple lines efficiently.
+Strips ANSI sequences from multiple strings.
 
 ```typescript
 stripLines(["\x1b[31mLine 1\x1b[0m", "\x1b[32mLine 2\x1b[0m", "Line 3"]);
-// => ['Line 1', 'Line 2', 'Line 3']
+// => ["Line 1", "Line 2", "Line 3"]
 ```
+
+### `createStreamingStripper(): StreamingStripper`
+
+Creates a stateful stripper for string chunks. It keeps constant parser state
+and does not buffer control-string payloads.
+
+```typescript
+const stripper = createStreamingStripper();
+
+stripper.write("Hello \x1b[31"); // => "Hello "
+stripper.write("mWorld\x1b[0m"); // => "World"
+stripper.end(); // => ""
+```
+
+Call `end()` after the final chunk. It drops an incomplete final control
+sequence, flushes any pending visible UTF-16 code unit, and resets the stripper
+for reuse.
 
 ### `hasAnsi(input: string): boolean`
 
-Fast check for ESC and the supported 8-bit C1 introducers/terminators. It does not fully parse the sequence.
+Detects ESC and the supported 8-bit C1 introducers or terminators. This function
+does not parse the complete sequence.
 
 ```typescript
 hasAnsi("\x1b[31mRed\x1b[0m"); // => true
@@ -91,7 +103,7 @@ hasAnsi("Plain text"); // => false
 
 ### `hasAnsiAny(inputs: string[]): boolean`
 
-Check if any string in array contains ANSI codes (short-circuits on first match).
+Returns `true` when any input contains a supported sequence prefix.
 
 ```typescript
 hasAnsiAny(["Plain", "\x1b[31mRed\x1b[0m", "Text"]); // => true
@@ -100,7 +112,7 @@ hasAnsiAny(["Plain", "Text"]); // => false
 
 ### `hasAnsiAll(inputs: string[]): boolean`
 
-Check if all strings in array contain ANSI codes.
+Returns `true` when every input contains a supported sequence prefix.
 
 ```typescript
 hasAnsiAll(["\x1b[31mRed\x1b[0m", "\x1b[32mGreen\x1b[0m"]); // => true
@@ -109,36 +121,36 @@ hasAnsiAll(["\x1b[31mRed\x1b[0m", "Plain"]); // => false
 
 ### `parse(input: string): ParseResult`
 
-Parse ANSI escape sequences and extract both text and sequence metadata.
+Parses ANSI escape sequences and returns visible text with sequence metadata.
 
 ```typescript
 const result = parse("\x1b[1;31mError:\x1b[0m Failed");
 
 result.text;
-// => 'Error: Failed'
+// => "Error: Failed"
 
 result.sequences;
 // => [
 //   {
-//     type: 'csi',
-//     raw: '\x1b[1;31m',
+//     type: "csi",
+//     raw: "\x1b[1;31m",
 //     start: 0,
-//     end: 8,
-//     params: ['1', '31'],
-//     final: 'm'
+//     end: 7,
+//     params: ["1", "31"],
+//     final: "m"
 //   },
 //   {
-//     type: 'csi',
-//     raw: '\x1b[0m',
-//     start: 14,
-//     end: 18,
-//     params: ['0'],
-//     final: 'm'
+//     type: "csi",
+//     raw: "\x1b[0m",
+//     start: 13,
+//     end: 17,
+//     params: ["0"],
+//     final: "m"
 //   }
 // ]
 ```
 
-**Use cases**:
+Common uses include:
 
 - Debugging ANSI sequences
 - Analyzing terminal output
@@ -150,18 +162,19 @@ CSI metadata is lossless:
 ```typescript
 const [sequence] = parse("\x1b[?38:2::255:0:0;1 qText").sequences;
 
-sequence.parameterBytes; // '?38:2::255:0:0;1'
-sequence.privateMarker; // '?'
-sequence.params; // ['38:2::255:0:0', '1'] — colon subparameters stay intact
-sequence.intermediateBytes; // ' '
-sequence.final; // 'q'
+sequence.parameterBytes; // "?38:2::255:0:0;1"
+sequence.privateMarker; // "?"
+sequence.params; // ["38:2::255:0:0", "1"] — colon subparameters stay intact
+sequence.intermediateBytes; // " "
+sequence.final; // "q"
 ```
 
-Empty semicolon-delimited parameters are preserved, so parsing `\x1b[;m` returns `params: ['', '']`.
+Empty semicolon-delimited parameters are preserved, so parsing `\x1b[;m` returns
+`params: ['', '']`.
 
 ### `StripOptions`
 
-Options for selective stripping — preserve specific ANSI sequence types while stripping others.
+Controls which ANSI sequence types remain in the output.
 
 ```typescript
 interface StripOptions {
@@ -170,7 +183,7 @@ interface StripOptions {
 ```
 
 ```typescript
-import { strip, AnsiType } from "@lpm.dev/neo.ansi";
+import { AnsiType, strip } from "@lpm.dev/neo.ansi";
 
 // Strip colors but keep hyperlinks (OSC sequences)
 strip(
@@ -179,11 +192,11 @@ strip(
     preserve: [AnsiType.OSC],
   },
 );
-// => 'Visit \x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ here'
+// => "Visit \x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ here"
 
 // Keep colors but strip everything else
 strip("\x1b[31mRed\x1b]0;Title\x07\x1b[0m text", { preserve: [AnsiType.CSI] });
-// => '\x1b[31mRed\x1b[0m text'
+// => "\x1b[31mRed\x1b[0m text"
 
 // Preserve multiple types
 strip(input, { preserve: [AnsiType.CSI, AnsiType.OSC] });
@@ -193,23 +206,37 @@ strip(input, { preserve: [] });
 ```
 
 **`AnsiType` values:**
-| Value | Sequences |
-|-------|-----------|
-| `AnsiType.CSI` | Colors, cursor movement, SGR (`ESC [`) |
-| `AnsiType.OSC` | Hyperlinks, window titles (`ESC ]`) |
-| `AnsiType.DCS` | Device control strings (`ESC P`) |
-| `AnsiType.SOS` | Start-of-string controls (`ESC X`) |
-| `AnsiType.PM` | Privacy messages (`ESC ^`) |
-| `AnsiType.APC` | Application program commands (`ESC _`) |
-| `AnsiType.Simple` | Two-character escapes (`ESC letter`) |
 
-## Supported ANSI Sequences
+| Value              | Sequences                                              |
+| ------------------ | ------------------------------------------------------ |
+| `AnsiType.CSI`     | Colors, cursor movement, SGR (`ESC [`)                 |
+| `AnsiType.OSC`     | Hyperlinks, window titles (`ESC ]`)                    |
+| `AnsiType.DCS`     | Device control strings (`ESC P`)                       |
+| `AnsiType.SOS`     | Start-of-string controls (`ESC X`)                     |
+| `AnsiType.PM`      | Privacy messages (`ESC ^`)                             |
+| `AnsiType.APC`     | Application program commands (`ESC _`)                 |
+| `AnsiType.Simple`  | Simple/intermediate ESC sequences and standalone C1 ST |
+| `AnsiType.Unknown` | Malformed, canceled, or incomplete sequences           |
 
-neo.ansi recognizes the common 7-bit ESC forms and their 8-bit C1 equivalents.
+Use any non-empty `preserve` option only with trusted terminal output.
+Preserving `AnsiType.Unknown` can re-emit malformed or incomplete control
+prefixes. These prefixes can become active after concatenation with later text.
 
-### CSI (Control Sequence Introducer) - `ESC [`
+## Behavior and limits
 
-Most common sequences for colors, cursor movement, etc.
+`hasAnsi()` detects supported introducers and terminators without complete
+parsing. If you require sequence validity or metadata, use `parse()`.
+
+The streaming stripper keeps constant parser state. It does not buffer
+control-string payloads.
+
+### Supported ANSI sequences
+
+The package recognizes common 7-bit ESC forms and their 8-bit C1 equivalents.
+
+#### CSI (Control Sequence Introducer) — `ESC [`
+
+CSI includes colors, display controls, and cursor movement.
 
 ```typescript
 strip("\x1b[31mRed\x1b[0m"); // SGR colors
@@ -219,34 +246,37 @@ strip("Clear\x1b[2J"); // Erase display
 strip("\x1b[?25hShow cursor"); // Private sequences
 ```
 
-### OSC (Operating System Command) - `ESC ]`
+#### OSC (Operating System Command) — `ESC ]`
 
-Hyperlinks, window titles, etc.
+OSC includes hyperlinks and window titles.
 
 ```typescript
 // Hyperlinks (terminated by BEL or ST)
 strip("\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
-// => 'link'
+// => "link"
 
 // Window title (terminated by BEL)
 strip("\x1b]0;My Title\x07Text");
-// => 'Text'
+// => "Text"
 ```
 
-### DCS (Device Control String) - `ESC P`
+#### DCS (Device Control String) — `ESC P`
 
 Device-specific sequences.
 
 ```typescript
 strip("\x1bP1$rTest\x1b\\After"); // ST terminator
-// => 'After'
+// => "After"
 ```
 
-DCS, SOS, PM, and APC require ST (`ESC \\` or C1 ST). BEL is accepted only for OSC compatibility.
+DCS, SOS, PM, and APC terminate normally with ST (`ESC \\` or C1 ST). BEL is
+accepted only for OSC compatibility. CAN, SUB, ESC, or any C1 control cancels an
+unfinished string control, after which scanning resumes.
 
-### Simple Escapes - `ESC letter`
+#### Simple and intermediate escapes
 
-Two-character escape sequences.
+Two-character ESC forms, ESC sequences with intermediate bytes, and standalone
+C1 ST.
 
 ```typescript
 strip("\x1b7Save cursor"); // Save cursor
@@ -257,54 +287,69 @@ strip("\x1b(BASCII charset"); // ESC intermediate + final
 
 ## Performance
 
-`strip()` scans directly without creating the sequence objects returned by `parse()`. It has dedicated fast paths for plain text, common ESC-only output, and dense CSI output while retaining the complete scanner as a fallback.
+`strip()` scans directly without creating the sequence objects returned by
+`parse()`. It has dedicated fast paths for plain text and common ESC-only output
+while retaining the complete scanner for C1 and selective-preservation behavior.
 
-In the reference Apple M5 Pro / Node.js 26.5.0 run, neo.ansi was faster than pinned `strip-ansi@7.2.0` on eight of nine equivalent workloads and about 6% slower on mixed CLI output. The largest measured lead was 4.46x on 10KB text with sparse ANSI. These numbers are environment-specific; see [BENCHMARKS.md](BENCHMARKS.md) for the complete results and reproduction details.
+In one Apple M5 Pro and Node.js 26.5.0 run, the package led four of eleven
+equivalent workloads.
+
+The 1 MB plain-text result was within 1%. The largest measured lead was 2.90x
+for 10 KB of text with sparse ANSI.
+
+See [BENCHMARKS.md](./BENCHMARKS.md) for the environment, method, complete
+results, and limits.
+
+Run the benchmark suite:
+
+```bash
+lpm run bench
+```
+
+Benchmark results depend on the runtime, computer, options, and input data.
 
 ## Security
 
-### ReDoS Protection
+### ReDoS protection
 
-neo.ansi uses forward scanners for the complete grammar. Its dense-CSI fast path uses ordered, disjoint byte classes and falls back to the scanner for complex or malformed input, preserving linear scaling.
+The package uses bounded, forward scanners for the sequence grammar. Native
+candidate searches skip long ordinary payload spans, and byte-class loops
+classify the candidate controls. No sequence-recognition expression contains
+ambiguous quantified groups.
 
-**CVE-2021-3807** affected historical `ansi-regex` releases before the upstream fix:
+**CVE-2021-3807** affected historical `ansi-regex` releases before the upstream
+fix:
 
 - Cause: catastrophic backtracking on malicious input
-- Current `ansi-regex` and `strip-ansi` releases are not affected by that historical CVE
-- neo.ansi's sequence recognition remains O(n) for this input class
+- Current `ansi-regex` and `strip-ansi` releases are not affected by that
+  historical CVE
+- The package uses linear work for this input class
 
 ```typescript
 // This affected vulnerable historical ansi-regex releases
 const malicious = "\x1b[" + "1;".repeat(50000) + "m";
 
 // neo.ansi handles it in linear time
-strip(malicious); // => ''
+strip(malicious); // => ""
 ```
 
-### Supply Chain Security
+### Supply-chain security
 
-**September 2025 npm attack**:
+The package has no runtime dependencies. The repository commits its lockfile and
+applies a dependency audit gate during continuous integration.
 
-- 27+ packages compromised including strip-ansi, chalk, debug
-- 2.6 billion weekly downloads affected
-- Attack vector: Compromised maintainer accounts
+These controls reduce the dependency surface. They do not prevent a compromised
+maintainer or build tool.
 
-**neo.ansi controls**:
+### Terminal sanitization boundary
 
-- ✅ **Zero runtime dependencies** - No dependency chain to compromise
-- ✅ **Committed lockfile** - Reproducible development and release dependency graph
-- ✅ **Dependency audit gate** - High/critical development advisories fail CI
-- ✅ **Strict TypeScript and adversarial tests**
+`strip()` removes recognized ANSI escape sequences. It is not a complete
+untrusted-terminal sanitizer. The output can contain carriage returns,
+backspace, BEL outside OSC, bidirectional Unicode controls, and other controls.
 
-Zero dependencies reduce supply-chain exposure; they do not eliminate the risk of compromised maintainers or build tooling.
+Use a non-empty `preserve` option only with trusted terminal output.
 
-### Terminal-sanitization boundary
-
-`strip()` removes recognized ANSI escape sequences. It is not a complete untrusted-terminal sanitizer: carriage returns, backspace, BEL outside OSC, bidirectional Unicode controls, and other non-ANSI controls may remain. Preserving CSI, OSC, DCS, SOS, PM, or APC sequences should only be done for trusted input.
-
-## Migration Guide
-
-### From strip-ansi
+## Migration from `strip-ansi`
 
 ```typescript
 // Before
@@ -316,14 +361,9 @@ import { strip } from "@lpm.dev/neo.ansi";
 const clean = strip("\x1b[31mRed\x1b[0m");
 ```
 
-**Benefits**:
+Run the application tests after the migration.
 
-- Zero dependencies
-- Linear-time sequence recognition
-- Parsed sequence metadata
-- Type-safe
-
-### From ansi-regex
+## Migration from `ansi-regex`
 
 ```typescript
 // Before
@@ -337,14 +377,11 @@ const hasAnsiCodes = hasAnsi(string);
 const clean = strip(string);
 ```
 
-**Benefits**:
+Run the application tests after the migration.
 
-- Linear-time sequence recognition
-- Simpler API
+## Examples
 
-## Real-World Use Cases
-
-### Test Runner Output
+### Test runner output
 
 ```typescript
 const output = `
@@ -358,22 +395,22 @@ strip(output);
 // ✗ test/unit/parse.test.ts (1 failed)
 ```
 
-### Build Tool Output
+### Build tool output
 
 ```typescript
 const viteOutput = `
 \x1b[36mvite\x1b[0m \x1b[32mv5.0.0\x1b[0m building for production...
 \x1b[32m✓\x1b[0m 42 modules transformed.
-dist/index.js  \x1b[1;32m~16.2 KB\x1b[0m
+dist/index.js  \x1b[1;32m~28.7 KiB\x1b[0m
 `;
 
 strip(viteOutput);
 // => vite v5.0.0 building for production...
 // => ✓ 42 modules transformed.
-// => dist/index.js  ~16.2 KB
+// => dist/index.js  ~28.7 KiB
 ```
 
-### Log Analysis
+### Log analysis
 
 ```typescript
 const logs = [
@@ -383,17 +420,17 @@ const logs = [
 ];
 
 const clean = stripLines(logs);
-// => ['[INFO] Server started', '[ERROR] Connection failed', '[WARN] Deprecated API used']
+// => ["[INFO] Server started", "[ERROR] Connection failed", "[WARN] Deprecated API used"]
 ```
 
-### Terminal Hyperlinks
+### Terminal hyperlinks
 
 ```typescript
 const hyperlink =
   "Visit \x1b]8;;https://example.com\x1b\\example.com\x1b]8;;\x1b\\ for more";
 
 strip(hyperlink);
-// => 'Visit example.com for more'
+// => "Visit example.com for more"
 ```
 
 ## TypeScript
@@ -401,36 +438,43 @@ strip(hyperlink);
 Full TypeScript support with strict types:
 
 ```typescript
-import type { AnsiSequence, ParseResult, AnsiType } from "@lpm.dev/neo.ansi";
+import { parse } from "@lpm.dev/neo.ansi";
+import type { AnsiSequence, ParseResult } from "@lpm.dev/neo.ansi";
 
 const result: ParseResult = parse("\x1b[31mRed\x1b[0m");
 result.text; // string
 result.sequences; // AnsiSequence[]
 
-const seq: AnsiSequence = result.sequences[0];
-seq.type; // AnsiType ('csi' | 'osc' | 'dcs' | 'sos' | 'pm' | 'apc' | 'simple' | 'unknown')
-seq.raw; // string
-seq.start; // number
-seq.end; // number
-seq.params; // string[] | undefined
-seq.parameterBytes; // string | undefined
-seq.privateMarker; // string | undefined
-seq.intermediateBytes; // string | undefined
-seq.final; // string | undefined
+const sequences: AnsiSequence[] = result.sequences;
+const [seq] = sequences;
+if (seq) {
+  seq.type; // AnsiType
+  seq.raw; // string
+  seq.start; // number
+  seq.end; // number
+  seq.params; // string[] | undefined
+  seq.parameterBytes; // string | undefined
+  seq.privateMarker; // string | undefined
+  seq.intermediateBytes; // string | undefined
+  seq.final; // string | undefined
+}
 ```
 
-## Bundle Size
+## Bundle size
 
-- **ESM**: ~16.2 KB
-- **CJS**: ~16.6 KB
-- **Types**: ~10.9 KB
-- **Gzipped ESM**: ~4.0 KB
+- **ESM**: ~28.7 KiB
+- **CJS**: ~29.1 KiB
+- **Types**: ~12.0 KiB
+- **Gzipped ESM**: ~5.9 KiB
 
-Tree-shakeable: Import only what you need.
+Bundlers can remove unused exports.
 
-## Browser Support
+## Runtime support
 
-Works in all modern browsers and Node.js 18+.
+- **Node.js:** 18 or later
+- **Browsers:** Modern browsers
+- **Module formats:** ESM and CommonJS
+- **TypeScript:** Declaration files included
 
 ```typescript
 // Browser
@@ -442,4 +486,4 @@ const { strip } = require("@lpm.dev/neo.ansi");
 
 ## License
 
-MIT
+MIT. See [LICENSE](./LICENSE).

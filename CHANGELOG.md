@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Add `createStreamingStripper()` for constant-memory stripping across arbitrary chunk boundaries
+
+### Fixed
+
+- Recover visible text after CAN, SUB, ESC, or any C1 control cancels an unfinished OSC, DCS, SOS, PM, or APC control string
+- Correct parse offsets and C1 fast-path wording in published documentation
+- Include the linked `BENCHMARKS.md` file in the published package
+
+### Security
+
+- Replace buffering streaming recipes that could repeatedly rescan attacker-controlled payloads
+- Refresh dependency locks past the high-severity Nanoid advisory and migrate the LPM lockfile to the current format
+
+### Performance
+
+- Remove the steerable dense-CSI prepass and add native candidate jumps for long control-string payloads
+- Normalize selective-preservation types into a bitmask for constant-time sequence checks
+- Avoid regex match allocations after the first scanner match and use a single combined plain-input scan
+
 ## [1.1.0] - 2026-08-03
 
 ### Fixed

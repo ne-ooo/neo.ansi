@@ -11,6 +11,10 @@
  * Character codes for ANSI escape sequences
  */
 export const CHAR_CODE = {
+  /** CAN - Cancel the current escape/control sequence */
+  CAN: 0x18,
+  /** SUB - Substitute; cancels the current escape/control sequence */
+  SUB: 0x1a,
   /** ESC - Escape character (0x1B) */
   ESC: 0x1b,
   /** [ - Left bracket for CSI */
@@ -58,6 +62,17 @@ export const CHAR_CODE = {
   /** ~ - Tilde (CSI final byte range end) */
   TILDE: 0x7e, // ~
 } as const
+
+/** Candidate controls for native control-string payload searches. */
+export const ANSI_INTRODUCER_PATTERN =
+  /[\u001b\u0090\u0098\u009b-\u009f]/g
+export const C1_ANSI_PATTERN = /[\u0090\u0098\u009b-\u009f]/g
+export const OSC_STRING_CANDIDATE_PATTERN =
+  /[\u0007\u0018\u001a\u001b\u0080-\u009f]/g
+export const STRING_CANDIDATE_PATTERN = /[\u0018\u001a\u001b\u0080-\u009f]/g
+export const STRING_SEARCH_THRESHOLD = 8
+/** Use native RegExp search only when its setup cost beats a byte loop. */
+export const REGEXP_SCAN_THRESHOLD = 16
 
 /**
  * ECMA-48 byte ranges used by ESC and CSI sequences.

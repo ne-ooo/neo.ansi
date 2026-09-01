@@ -18,6 +18,8 @@ import {
 
 describe('Character code constants', () => {
   it('should have correct ESC character code', () => {
+    expect(CHAR_CODE.CAN).toBe(0x18)
+    expect(CHAR_CODE.SUB).toBe(0x1a)
     expect(CHAR_CODE.ESC).toBe(0x1b)
     expect(String.fromCharCode(CHAR_CODE.ESC)).toBe('\x1b')
   })

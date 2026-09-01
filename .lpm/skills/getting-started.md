@@ -36,7 +36,9 @@ const clean = strip('\x1b[31mError:\x1b[0m file not found')
 // 'Error: file not found'
 ```
 
-`strip()` has a built-in fast path — if the string contains no ESC character (`\x1b`), it returns the input immediately without parsing. No need to guard with `hasAnsi()` first.
+`strip()` has a built-in fast path. If the string contains no ESC character
+(`\x1b`) or supported 8-bit C1 control, it returns the input immediately
+without parsing. No need to guard with `hasAnsi()` first.
 
 ### Batch stripping
 
@@ -68,6 +70,10 @@ const clean = strip(input, { preserve: [AnsiType.CSI] })
 // Keep both CSI and OSC, strip DCS and simple escapes
 const clean = strip(input, { preserve: [AnsiType.CSI, AnsiType.OSC] })
 ```
+
+Use non-empty preservation only with trusted terminal output. Preserved
+sequences remain active controls, and preserving `AnsiType.Unknown` can
+re-emit malformed or incomplete control prefixes.
 
 Always use the `AnsiType` enum, not raw strings:
 

@@ -166,6 +166,27 @@ describe('parse', () => {
       expect(result.sequences[0]?.type).toBe(AnsiType.OSC)
       expect(result.sequences[1]?.type).toBe(AnsiType.OSC)
     })
+
+    it('should mark a canceled OSC unknown and retain following text', () => {
+      const result = parse('\x1b]0;Title\x18Visible')
+
+      expect(result.text).toBe('Visible')
+      expect(result.sequences[0]).toMatchObject({
+        type: AnsiType.Unknown,
+        raw: '\x1b]0;Title\x18',
+      })
+    })
+
+    it('should reprocess a non-ST ESC after a canceled OSC', () => {
+      const result = parse('\x1b]0;Title\x1b[31mVisible\x1b[0m')
+
+      expect(result.text).toBe('Visible')
+      expect(result.sequences.map((sequence) => sequence.type)).toEqual([
+        AnsiType.Unknown,
+        AnsiType.CSI,
+        AnsiType.CSI,
+      ])
+    })
   })
 
   describe('DCS sequences', () => {

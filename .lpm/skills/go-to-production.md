@@ -1,6 +1,6 @@
 ---
 name: go-to-production
-description: Production patterns for neo.ansi — streaming with chunk buffering, line-by-line vs full buffer, ReDoS immunity, allocation costs, and high-throughput processing
+description: Production patterns for neo.ansi — stateful streaming, line-by-line vs full buffer, ReDoS immunity, allocation costs, and high-throughput processing
 version: "1.1.0"
 globs:
   - "**/*.ts"
@@ -11,7 +11,9 @@ globs:
 
 ## Streaming: Handle Chunk Boundaries
 
-The parser is stateless — each `strip()` or `parse()` call processes a complete string independently. ANSI sequences split across chunk boundaries require manual buffering.
+The one-shot `strip()` and `parse()` functions process complete strings.
+Use `createStreamingStripper()` when ANSI sequences can cross chunk
+boundaries.
 
 ### The problem
 
@@ -22,31 +24,48 @@ Chunk 2: "mWorld\x1b[0m"      ← "m" completes chunk 1's sequence
 
 Stripping each chunk independently produces `"Hello mWorld"` — the `m` leaks as literal text.
 
-### Recommended buffering pattern
+### Recommended stateful pattern
 
 ```typescript
-import { parse, strip, AnsiType } from '@lpm.dev/neo.ansi'
+import { createStreamingStripper } from '@lpm.dev/neo.ansi'
 
-let buffer = ''
+const stripper = createStreamingStripper()
 
-function processChunk(chunk: string): string {
-  const input = buffer + chunk
-  buffer = ''
-
-  const result = parse(input)
-  const lastSeq = result.sequences.at(-1)
-
-  if (lastSeq?.type === AnsiType.Unknown && lastSeq.end === input.length) {
-    // Last sequence is incomplete — buffer it for next chunk
-    buffer = lastSeq.raw
-    return strip(input.slice(0, lastSeq.start))
-  }
-
-  return strip(input)
-}
+stream.setEncoding('utf8')
+stream.on('data', (chunk: string) => {
+  output.write(stripper.write(chunk))
+})
+stream.on('end', () => {
+  output.write(stripper.end())
+})
 ```
 
-Key insight: only the **last** sequence in a parse result can be incomplete (marked `AnsiType.Unknown` at EOF). Mid-string Unknown sequences are genuinely malformed, not split.
+The streaming stripper processes each code unit once and retains only parser
+state. It does not store an incomplete OSC, DCS, SOS, PM, or APC payload, so
+an unterminated attacker-controlled control string cannot grow a pending
+buffer or trigger repeated rescanning. `end()` drops any incomplete final
+control sequence and resets the instance.
+
+When stream chunks are `Buffer` objects, decode them with Node.js
+`StringDecoder` before calling `stripper.write()`. Calling `buffer.toString()` on
+each chunk separately can corrupt a UTF-8 character split across two chunks.
+
+```typescript
+import { StringDecoder } from 'node:string_decoder'
+import { createStreamingStripper } from '@lpm.dev/neo.ansi'
+
+const decoder = new StringDecoder('utf8')
+const stripper = createStreamingStripper()
+
+stream.on('data', chunk => {
+  output.write(stripper.write(decoder.write(chunk)))
+})
+stream.on('end', () => {
+  const tail = decoder.end()
+  if (tail) output.write(stripper.write(tail))
+  output.write(stripper.end())
+})
+```
 
 ### Streaming with readline (built-in backpressure)
 
@@ -94,11 +113,12 @@ const clean = strip(entireLogFile)
 
 ## Performance Characteristics
 
-`strip()` has fast paths for plain text, common ESC-only output, and dense CSI output. The bundled suite performs output-equivalent comparisons against a pinned `strip-ansi` version. Absolute performance still depends on the Node/browser version, input distribution, and hardware; see `BENCHMARKS.md` for the recorded environment and results.
+`strip()` has fast paths for plain text and common ESC-only output. The bundled suite performs output-equivalent comparisons against a pinned `strip-ansi` version. Absolute performance still depends on the Node/browser version, input distribution, and hardware; see `BENCHMARKS.md` for the recorded environment and results.
 
 ## ReDoS Immunity
 
-Complete sequence recognition is forward-only and O(n). The dense-CSI fast path uses ordered, disjoint byte classes and falls back to the scanner if an ESC/C1 control remains.
+Complete sequence recognition is forward-only and O(n). Native searches skip
+ordinary spans, and bounded byte-class loops classify possible controls.
 
 The security suite includes patterns that affected historical vulnerable regex implementations:
 
@@ -137,7 +157,11 @@ import { strip } from '@lpm.dev/neo.ansi'
 const cleanTransport = new CustomTransport(async (entry) => {
   const cleanMessage = strip(entry.message)
   const cleanData = entry.data
-    ? JSON.parse(strip(JSON.stringify(entry.data)))
+    ? JSON.parse(
+        JSON.stringify(entry.data, (_key, value) =>
+          typeof value === 'string' ? strip(value) : value
+        )
+      )
     : undefined
   await sendToService({ ...entry, message: cleanMessage, data: cleanData })
 })
@@ -166,3 +190,7 @@ const terminalFriendly = strip(input, { preserve: [AnsiType.OSC] })
 // Keep colors, strip everything else
 const colorsOnly = strip(input, { preserve: [AnsiType.CSI] })
 ```
+
+Use every non-empty `preserve` configuration only with trusted terminal
+output. Preserved sequences remain active controls; malformed or incomplete
+`AnsiType.Unknown` sequences are particularly unsafe to re-emit.
